@@ -28,6 +28,8 @@ final class AppModel: ObservableObject {
     private let hotkeys = HotKeyCenter()
     private let defaults = UserDefaults.standard
     private var forwarding = Set<AnyCancellable>()
+    private var activity: NSObjectProtocol?
+    private var reportedPipelineStall = false
 
     // MARK: State
 
@@ -112,6 +114,7 @@ final class AppModel: ObservableObject {
     private func wirePipeline() {
         // Both run on the pipeline queue.
         camera.onFrame = { [pipeline] buffer, time in pipeline.process(buffer, at: time) }
+        camera.onStatus = { [weak self] status in Task { @MainActor in self?.cameraStatus(status) } }
         pipeline.onOutput = { [sink] buffer, _ in sink.send(buffer) }
         pipeline.onPreview = { [preview] image in preview.show(image) }
         preview.onDemandChanged = { [pipeline] wanted in pipeline.setPreviewEnabled(wanted) }
@@ -137,6 +140,8 @@ final class AppModel: ObservableObject {
                     self.isStarting = false
                     if let error { self.report(error); return }
                     self.isOn = true
+                    self.pipeline.markStarted()
+                    self.beginActivity()
                     self.sink.connect()
                 }
             }
@@ -148,7 +153,41 @@ final class AppModel: ObservableObject {
         pipeline.stop()
         sink.disconnect()
         preview.show(nil)
+        endActivity()
         isOn = false
+    }
+
+    /// While the camera is on this is live video, and it comes from a menu bar app that is never in front. Without
+    /// saying so, macOS is free to throttle it (App Nap) just when another app has the focus.
+    private func beginActivity() {
+        guard activity == nil else { return }
+        activity = ProcessInfo.processInfo.beginActivity(options: [.userInitiatedAllowingIdleSystemSleep, .latencyCritical],
+                                                         reason: "Backdrop is sending live video to other apps")
+    }
+
+    private func endActivity() {
+        if let activity { ProcessInfo.processInfo.endActivity(activity) }
+        activity = nil
+    }
+
+    private func cameraStatus(_ status: CameraCapture.Status) {
+        switch status {
+        case .stalled: message = "The camera stopped sending video, so Backdrop is restarting it."
+        case .recovered: if message?.hasPrefix("The camera stopped") == true { message = nil }
+        }
+    }
+
+    /// The camera is delivering but nothing comes out the other end: processing is stuck. Log it, once per episode.
+    private func watchPipeline() {
+        let quiet = pipeline.secondsSinceOutput
+        if quiet > 3, camera.secondsSinceFrame < 1.5 {
+            if !reportedPipelineStall {
+                reportedPipelineStall = true
+                Log.pipeline.notice("no finished frames for \(Int(quiet), privacy: .public) s although the camera is delivering")
+            }
+        } else if quiet < 1 {
+            reportedPipelineStall = false
+        }
     }
 
     private static func cameraAccess() async -> Bool {
@@ -310,6 +349,13 @@ final class AppModel: ObservableObject {
                 if effectsOn != self.systemEffectsOn { self.systemEffectsOn = effectsOn }
                 if self.isOn {
                     if present { self.sink.connect() } else { self.sink.disconnect() }
+                    if let problem = self.sink.healthProblem() {
+                        // The extension restarted or jammed. Rebuild the connection rather than feed a dead one.
+                        Log.sink.notice("reconnecting: \(problem, privacy: .public)")
+                        self.sink.disconnect()
+                        self.sink.connect()
+                    }
+                    self.watchPipeline()
                 }
                 let connected = self.sink.isConnected
                 if connected != self.sinkConnected { self.sinkConnected = connected }

@@ -9,7 +9,7 @@ final class VirtualCameraSink {
     static let deviceUUID = "5D8B2A40-7C2E-4F8E-9D3A-BA0C4D2E6F11"
     static let deviceName = "Backdrop Camera"
 
-    private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.zamasu.backdrop", category: "virtual-camera")
+    private static let log = Log.sink
 
     private let lock = NSLock()
     private var deviceID = CMIODeviceID(0)
@@ -17,15 +17,19 @@ final class VirtualCameraSink {
     private var queue: CMSimpleQueue?
     private var formatDescription: CMVideoFormatDescription?
     private var lastPresence: Bool?
+    private var latestDevice: CMIODeviceID?
+    private var drops = DropStreak()
 
     var isConnected: Bool { lock.withLock { queue != nil } }
 
     /// Whether the extension is installed and approved. Cheap enough to poll.
     var isDevicePresent: Bool {
-        let present = findDevice() != nil
+        let device = findDevice()
+        lock.withLock { latestDevice = device }
+        let present = device != nil
         if present != lastPresence {
             lastPresence = present
-            Self.log.info("Backdrop Camera \(present ? "found" : "not found", privacy: .public). Devices: \(self.describeDevices(), privacy: .public)")
+            Self.log.notice("Backdrop Camera \(present ? "found" : "not found", privacy: .public). Devices: \(self.describeDevices(), privacy: .public)")
         }
         return present
     }
@@ -49,8 +53,23 @@ final class VirtualCameraSink {
         deviceID = device
         streamID = sink
         queue = newQueue
-        Self.log.info("connected to sink stream \(sink) on device \(device)")
+        drops = DropStreak()
+        Self.log.notice("connected to sink stream \(sink) on device \(device)")
         return true
+    }
+
+    /// Why the connection to the extension looks broken, or nil if it looks fine. A connection made before the
+    /// extension restarted points at devices that no longer exist, and one the extension has stopped draining just fills up.
+    /// Either way frames vanish silently, so the caller should rebuild it.
+    func healthProblem() -> String? {
+        lock.withLock {
+            guard queue != nil else { return nil }
+            if let latestDevice, latestDevice != deviceID {
+                return "the camera extension restarted (device \(deviceID) is now \(latestDevice))"
+            }
+            if drops.isStalled(at: CFAbsoluteTimeGetCurrent()) { return "the camera extension has stopped accepting frames" }
+            return nil
+        }
     }
 
     private func describeDevices() -> String {
@@ -65,6 +84,8 @@ final class VirtualCameraSink {
         CMIODeviceStopStream(deviceID, streamID)
         queue = nil
         formatDescription = nil
+        drops = DropStreak()
+        Self.log.notice("disconnected from the camera extension")
     }
 
     // MARK: Sending
@@ -73,7 +94,11 @@ final class VirtualCameraSink {
     func send(_ pixelBuffer: CVPixelBuffer, at time: CMTime = CMClockGetTime(CMClockGetHostTimeClock())) {
         lock.lock(); defer { lock.unlock() }
         guard let queue else { return }
-        guard CMSimpleQueueGetCount(queue) < CMSimpleQueueGetCapacity(queue) else { return }
+        let now = CFAbsoluteTimeGetCurrent()
+        guard CMSimpleQueueGetCount(queue) < CMSimpleQueueGetCapacity(queue) else {
+            drops.recordFull(at: now)
+            return
+        }
 
         if formatDescription == nil || !CMVideoFormatDescriptionMatchesImageBuffer(formatDescription!, imageBuffer: pixelBuffer) {
             CMVideoFormatDescriptionCreateForImageBuffer(allocator: kCFAllocatorDefault, imageBuffer: pixelBuffer, formatDescriptionOut: &formatDescription)
@@ -88,6 +113,8 @@ final class VirtualCameraSink {
         // The queue takes ownership of one retain; the extension releases it when it consumes the frame.
         if CMSimpleQueueEnqueue(queue, element: Unmanaged.passRetained(sample).toOpaque()) != noErr {
             Unmanaged.passUnretained(sample).release()
+        } else {
+            drops.recordAccepted()
         }
     }
 

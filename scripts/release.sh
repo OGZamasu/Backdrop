@@ -32,6 +32,20 @@ EOF
 }
 
 echo "==> Building Backdrop $version ($bundle_id, team $team)"
+
+# The extension's file name comes from the bundle ID and is fixed when XcodeGen generates the project, so the project
+# must be generated with the release identity in effect. Swap it in through Config/Local.xcconfig (your private file,
+# if you have one) and put everything back afterwards, even if the build fails.
+local_config="Config/Local.xcconfig"
+saved_config=""
+if [[ -f "$local_config" ]]; then saved_config="$(mktemp)"; cp "$local_config" "$saved_config"; fi
+restore() {
+  if [[ -n "$saved_config" ]]; then mv "$saved_config" "$local_config"; else rm -f "$local_config"; fi
+  xcodegen generate > /dev/null 2>&1 || true
+}
+trap restore EXIT
+printf 'BACKDROP_BUNDLE_ID = %s\nDEVELOPMENT_TEAM = %s\n' "$bundle_id" "$team" > "$local_config"
+
 xcodegen generate > /dev/null
 rm -rf "$out" && mkdir -p "$out"
 
@@ -46,6 +60,14 @@ options export
 xcodebuild -exportArchive -quiet -archivePath "$out/Backdrop.xcarchive" -exportPath "$out/signed" \
   -exportOptionsPlist "$out/ExportOptions-export.plist" -allowProvisioningUpdates
 codesign --verify --deep --strict "$out/signed/Backdrop.app"
+
+# macOS will not activate a system extension whose file isn't named after its bundle ID. Catch that here, not on a user's Mac.
+expected="$out/signed/Backdrop.app/Contents/Library/SystemExtensions/$bundle_id.camera.systemextension"
+if [[ ! -d "$expected" ]]; then
+  echo "The camera extension is not named $bundle_id.camera.systemextension, so macOS would refuse to install it:" >&2
+  ls "$out/signed/Backdrop.app/Contents/Library/SystemExtensions/" >&2
+  exit 1
+fi
 
 echo "==> Submitting to Apple for notarization"
 options upload

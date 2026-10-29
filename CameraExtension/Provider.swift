@@ -12,6 +12,9 @@ private let width: Int32 = 1280
 private let height: Int32 = 720
 private let framesPerSecond: Int32 = 60
 private let frameDuration = CMTime(value: 1, timescale: framesPerSecond)
+/// How long to keep showing the last picture when the app goes quiet, before saying the app is off. A brief stall
+/// (a busy GPU, a hiccup) should look like a frozen frame, not like Backdrop quit.
+private let holdLastFrame: UInt64 = 2_500_000_000
 
 // MARK: - Provider
 
@@ -141,7 +144,7 @@ final class DeviceSource: NSObject, CMIOExtensionDeviceSource {
         let image: CVImageBuffer
         let format: CMVideoFormatDescription
 
-        if now &- lastAppFrame.uptimeNanoseconds > 300_000_000 {
+        if now &- lastAppFrame.uptimeNanoseconds > holdLastFrame {
             image = placeholder
             format = placeholderFormat
         } else if let lastImage, let lastFormat, now &- lastSend >= 14_000_000 {

@@ -75,9 +75,11 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(BACKDROP_BUNDLE_ID).camera
-        # A fixed file name. XcodeGen bakes this into the project when it generates it, so it must not depend on
-        # BACKDROP_BUNDLE_ID, which can be overridden at build time. The bundle ID is what identifies the extension.
-        PRODUCT_NAME: BackdropCamera
+        # The file MUST be named after the bundle ID (<id>.systemextension). macOS refuses to activate or update the
+        # extension otherwise, with the misleading message "cannot allow apps outside /Applications".
+        # XcodeGen bakes this name in when it generates the project, so anything overriding BACKDROP_BUNDLE_ID has to
+        # regenerate with it in effect (scripts/release.sh does).
+        PRODUCT_NAME: $(PRODUCT_BUNDLE_IDENTIFIER)
 
   # The engine compiles straight into the tests, so the cutout/compositing logic
   # can be verified without code signing or a camera.

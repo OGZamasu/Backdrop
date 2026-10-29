@@ -26,6 +26,15 @@ final class FramePipeline {
     private var previewEnabled = false
     private var frameCount = 0
 
+    private let outputLock = NSLock()
+    private var lastOutputAt = CFAbsoluteTimeGetCurrent()
+
+    /// Seconds since a finished frame was last produced. Large while the camera is delivering means processing is stuck.
+    var secondsSinceOutput: TimeInterval { outputLock.withLock { CFAbsoluteTimeGetCurrent() - lastOutputAt } }
+
+    /// Call when the camera starts, so the clock begins then rather than at launch.
+    func markStarted() { outputLock.withLock { lastOutputAt = CFAbsoluteTimeGetCurrent() } }
+
     private let transitionDuration: CFTimeInterval = 0.45
 
     init(compositor: Compositor = Compositor()) {
@@ -103,6 +112,7 @@ final class FramePipeline {
         guard let output = compositor.makeOutputBuffer() else { return }
         compositor.render(composed, into: output)
         onOutput?(output, time)
+        outputLock.withLock { lastOutputAt = CFAbsoluteTimeGetCurrent() }
 
         frameCount += 1
         if previewEnabled, frameCount % 2 == 0, let onPreview {
