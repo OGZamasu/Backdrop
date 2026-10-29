@@ -75,7 +75,9 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(BACKDROP_BUNDLE_ID).camera
-        PRODUCT_NAME: $(PRODUCT_BUNDLE_IDENTIFIER)
+        # A fixed file name. XcodeGen bakes this into the project when it generates it, so it must not depend on
+        # BACKDROP_BUNDLE_ID, which can be overridden at build time. The bundle ID is what identifies the extension.
+        PRODUCT_NAME: BackdropCamera
 
   # The engine compiles straight into the tests, so the cutout/compositing logic
   # can be verified without code signing or a camera.

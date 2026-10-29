@@ -9,6 +9,16 @@ On top of the system background effect it adds:
 - **Automation**: switch by app (Zoom → this one), calendar event (title contains "client"), or time of day. Global shortcuts: ⌃⌥→ / ⌃⌥← cycle, ⌃⌥B camera on/off.
 - **Cutout controls**: quality, edge softness, light wrap (background glow on your edges), colour match.
 
+## Download
+
+Get the latest `Backdrop-x.y.z.zip` from [Releases](https://github.com/OGZamasu/Backdrop/releases). It is signed with a Developer ID certificate and notarized by Apple, so it opens without warnings.
+
+1. Unzip it and drag **Backdrop.app** into **Applications**. It has to live there for macOS to accept its camera extension.
+2. Open it. Click the menu bar icon, then **Set Up Backdrop Camera**, and approve it in System Settings › General › Login Items & Extensions › Camera Extensions.
+3. Turn the camera on, then choose **Backdrop Camera** in your video app.
+
+Check the download against the `.sha256` file on the release page with `shasum -a 256 -c Backdrop-x.y.z.zip.sha256`.
+
 ## Requirements
 
 - macOS 15.1 or later (developed on macOS 27), Apple silicon.
@@ -85,6 +95,15 @@ Put the built `Backdrop.app` in `/Applications` (macOS only accepts a camera ext
 When you build a newer version, bump `CURRENT_PROJECT_VERSION` in `project.yml`. On launch Backdrop compares the installed extension's version with the one it carries and replaces it if they differ.
 
 The device UUID shared between the app and the extension lives in `App/VirtualCamera/VirtualCameraSink.swift` and `CameraExtension/Provider.swift`. Change them together.
+
+## Making a release
+
+```bash
+DEVELOPMENT_TEAM=YOURTEAMID scripts/release.sh
+```
+
+Builds a Release archive, signs it with Developer ID, has Apple notarize it, and writes `build/release/Backdrop-<version>.zip` and a checksum.
+It uses the Apple ID Xcode is signed in to (no certificate to export, no password to store). The first run registers the App IDs and an app group on your team. The signature carries the name on your Developer ID certificate, which is your legal name for an individual account.
 
 ## Known gaps
 
