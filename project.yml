@@ -1,0 +1,95 @@
+name: Backdrop
+options:
+  bundleIdPrefix: com.zamasu
+  createIntermediateGroups: true
+  deploymentTarget:
+    macOS: "15.1"
+# Identity (bundle ID, team) lives in Config/, not here. See Config/Backdrop.xcconfig.
+configFiles:
+  Debug: Config/Backdrop.xcconfig
+  Release: Config/Backdrop.xcconfig
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MACOSX_DEPLOYMENT_TARGET: "15.1"
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_HARDENED_RUNTIME: YES
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "5"
+
+targets:
+  Backdrop:
+    type: application
+    platform: macOS
+    sources:
+      - path: App
+      - path: Engine
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: Backdrop
+        LSUIElement: true
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        LSApplicationCategoryType: public.app-category.video
+        NSCameraUsageDescription: Backdrop reads your camera to cut you out and place you in front of a new background.
+        NSCalendarsFullAccessUsageDescription: Backdrop can switch backgrounds automatically while a calendar event is in progress.
+        NSSystemExtensionUsageDescription: Backdrop installs a virtual camera so other apps can use your new background.
+    entitlements:
+      path: App/Backdrop.entitlements
+      properties:
+        com.apple.developer.system-extension.install: true
+        com.apple.security.device.camera: true
+        com.apple.security.personal-information.calendars: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(BACKDROP_BUNDLE_ID)
+        PRODUCT_NAME: Backdrop
+        ASSETCATALOG_COMPILER_APPICON_NAME: ""
+    dependencies:
+      - target: CameraExtension
+        embed: true
+
+  CameraExtension:
+    type: system-extension
+    platform: macOS
+    sources:
+      - path: CameraExtension
+    info:
+      path: CameraExtension/Info.plist
+      properties:
+        CFBundlePackageType: SYSX
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleDisplayName: Backdrop Camera
+        CMIOExtension:
+          CMIOExtensionMachServiceName: $(TeamIdentifierPrefix)$(BACKDROP_BUNDLE_ID).camera
+        NSSystemExtensionUsageDescription: Backdrop Camera shows your camera with a new background in other apps.
+    entitlements:
+      path: CameraExtension/CameraExtension.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.application-groups:
+          - $(TeamIdentifierPrefix)$(BACKDROP_BUNDLE_ID).camera
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(BACKDROP_BUNDLE_ID).camera
+        PRODUCT_NAME: $(PRODUCT_BUNDLE_IDENTIFIER)
+
+  # The engine compiles straight into the tests, so the cutout/compositing logic
+  # can be verified without code signing or a camera.
+  BackdropTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests
+      - path: Engine
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        DEVELOPMENT_TEAM: ""
+        ENABLE_HARDENED_RUNTIME: NO
+        PRODUCT_BUNDLE_IDENTIFIER: $(BACKDROP_BUNDLE_ID).tests

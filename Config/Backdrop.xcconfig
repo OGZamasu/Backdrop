@@ -1,0 +1,9 @@
+// Who this build belongs to. The defaults let anyone build and run the tests without signing.
+//
+// To build the real app with the virtual camera, put your own values in Config/Local.xcconfig
+// (git-ignored; copy Local.xcconfig.example). Nothing else needs editing.
+
+BACKDROP_BUNDLE_ID = com.zamasu.backdrop
+DEVELOPMENT_TEAM =
+
+#include? "Local.xcconfig"

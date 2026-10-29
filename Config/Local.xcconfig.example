@@ -1,0 +1,8 @@
+// Copy to Config/Local.xcconfig and fill in. That file is git-ignored.
+
+// Reverse-DNS name you own. The camera extension becomes "<this>.camera".
+BACKDROP_BUNDLE_ID = com.yourname.backdrop
+
+// Your Apple Developer Program team ID (10 characters). The virtual camera is a system extension,
+// which needs a paid team; the app itself runs without one (see scripts/run-preview.sh).
+DEVELOPMENT_TEAM = ABCDE12345
