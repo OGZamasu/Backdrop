@@ -56,6 +56,8 @@ struct BackgroundThumbnail: View {
                 LinearGradient(colors: [rgb(c[0]), rgb(c[1]), rgb(c[2])], startPoint: .bottomLeading, endPoint: .topTrailing)
             case .pipes:
                 PipesThumbnail()
+            case .maze:
+                MazeThumbnail()
             case .image, .video:
                 if let loaded {
                     Image(nsImage: loaded).resizable().aspectRatio(contentMode: .fill)
@@ -112,6 +114,42 @@ private struct PipesThumbnail: View {
                             .position(x: route.points[j].x * w, y: route.points[j].y * h)
                     }
                 }
+            }
+        }
+    }
+}
+
+/// A brick corridor running off to a vanishing point, drawn rather than rendered so the grid stays cheap.
+private struct MazeThumbnail: View {
+    var body: some View {
+        GeometryReader { geometry in
+            let w = geometry.size.width, h = geometry.size.height
+            // The far end of the corridor, centred a little above the middle.
+            let far = CGRect(x: w * 0.38, y: h * 0.34, width: w * 0.24, height: h * 0.30)
+            let brick = Color(red: 0.55, green: 0.19, blue: 0.14)
+            ZStack {
+                Color.black
+                // Ceiling, floor, then the two side walls.
+                Path { p in p.move(to: .zero); p.addLine(to: CGPoint(x: w, y: 0)); p.addLine(to: CGPoint(x: far.maxX, y: far.minY)); p.addLine(to: CGPoint(x: far.minX, y: far.minY)); p.closeSubpath() }
+                    .fill(Color(white: 0.20))
+                Path { p in p.move(to: CGPoint(x: 0, y: h)); p.addLine(to: CGPoint(x: w, y: h)); p.addLine(to: CGPoint(x: far.maxX, y: far.maxY)); p.addLine(to: CGPoint(x: far.minX, y: far.maxY)); p.closeSubpath() }
+                    .fill(Color(white: 0.42))
+                Path { p in p.move(to: .zero); p.addLine(to: CGPoint(x: far.minX, y: far.minY)); p.addLine(to: CGPoint(x: far.minX, y: far.maxY)); p.addLine(to: CGPoint(x: 0, y: h)); p.closeSubpath() }
+                    .fill(brick)
+                Path { p in p.move(to: CGPoint(x: w, y: 0)); p.addLine(to: CGPoint(x: far.maxX, y: far.minY)); p.addLine(to: CGPoint(x: far.maxX, y: far.maxY)); p.addLine(to: CGPoint(x: w, y: h)); p.closeSubpath() }
+                    .fill(brick.opacity(0.85))
+                Rectangle().fill(brick.opacity(0.55)).frame(width: far.width, height: far.height).position(x: far.midX, y: far.midY)
+                // Mortar lines, converging with the walls.
+                Path { p in
+                    for t in stride(from: 0.2, through: 0.8, by: 0.2) {
+                        let y0 = h * t, y1 = far.minY + far.height * t
+                        p.move(to: CGPoint(x: 0, y: y0)); p.addLine(to: CGPoint(x: far.minX, y: y1))
+                        p.move(to: CGPoint(x: w, y: y0)); p.addLine(to: CGPoint(x: far.maxX, y: y1))
+                    }
+                }
+                .stroke(Color.black.opacity(0.45), lineWidth: 0.8)
+                // Torchlight fading into the dark ahead.
+                RadialGradient(colors: [.clear, .black.opacity(0.55)], center: .center, startRadius: h * 0.2, endRadius: w * 0.75)
             }
         }
     }

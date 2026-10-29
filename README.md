@@ -4,7 +4,7 @@ A menu bar app that replaces your camera background and shows up as its own came
 
 On top of the system background effect it adds:
 
-- **Live backgrounds**: looping video, a live window or your whole screen, animated gradients, the old Windows **3D Pipes** screensaver (rendered in 3D with SceneKit), and a parallax option that drifts the backdrop as you move.
+- **Live backgrounds**: looping video, a live window or your whole screen, animated gradients, the old Windows **3D Pipes** and **3D Maze** screensavers (rendered in 3D with SceneKit), and a parallax option that drifts the backdrop as you move.
 - **AI backgrounds**: describe a room and Image Playground generates it on-device.
 - **Automation**: switch by app (Zoom → this one), calendar event (title contains "client"), or time of day. Global shortcuts: ⌃⌥→ / ⌃⌥← cycle, ⌃⌥B camera on/off.
 - **Cutout controls**: quality, edge softness, light wrap (background glow on your edges), colour match.

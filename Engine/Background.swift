@@ -24,6 +24,8 @@ enum BackgroundKind: Codable, Hashable {
     case gradient(GradientPreset)
     /// The old Windows 3D Pipes screensaver.
     case pipes
+    /// The old Windows 3D Maze screensaver.
+    case maze
     case image(file: String)
     case video(file: String)
     /// A live window, matched by app (and optionally title) each time the background activates.
@@ -47,7 +49,7 @@ struct Background: Identifiable, Codable, Hashable {
     /// Whether the background changes over time and so needs a steady frame clock.
     var isLive: Bool {
         switch kind {
-        case .video, .window, .display, .gradient, .pipes: return true
+        case .video, .window, .display, .gradient, .pipes, .maze: return true
         default: return false
         }
     }
@@ -64,8 +66,9 @@ extension Background {
     static let heavyBlur = builtIn(3, "Heavy Blur", .blur(radius: 40))
 
     static let pipes = builtIn(30, "3D Pipes", .pipes)
+    static let maze = builtIn(31, "3D Maze", .maze)
 
     static let builtIns: [Background] =
-        [off, softBlur, heavyBlur, pipes]
+        [off, softBlur, heavyBlur, pipes, maze]
         + GradientPreset.allCases.enumerated().map { builtIn(10 + $0.offset, $0.element.title, .gradient($0.element)) }
 }

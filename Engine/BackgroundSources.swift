@@ -31,6 +31,8 @@ enum BackgroundSourceFactory {
             return GradientSource(preset: preset)
         case .pipes:
             return PipesSource()
+        case .maze:
+            return MazeSource()
         case .image:
             return library.fileURL(for: background).map(ImageSource.init)
         case .video:

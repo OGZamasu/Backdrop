@@ -201,6 +201,7 @@ private struct Inspector: View {
         case .blur: return "Your room, out of focus."
         case .gradient: return "A slowly shifting colour wash."
         case .pipes: return "The old Windows screensaver, growing behind you."
+        case .maze: return "The old Windows maze screensaver: a walk through brick corridors."
         case .image: return background.origin == .generated ? "Generated on this Mac." : "A still image."
         case .video: return "A looping video."
         case .window: return "A live window behind you."
