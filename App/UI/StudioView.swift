@@ -4,11 +4,12 @@ import UniformTypeIdentifiers
 
 struct StudioView: View {
     enum Pane: String, CaseIterable, Identifiable {
-        case backgrounds = "Backgrounds", automation = "Automation", camera = "Camera"
+        case backgrounds = "Backgrounds", lenses = "Lenses", automation = "Automation", camera = "Camera"
         var id: String { rawValue }
         var symbol: String {
             switch self {
             case .backgrounds: return "photo.on.rectangle.angled"
+            case .lenses: return "face.smiling"
             case .automation: return "wand.and.stars"
             case .camera: return "camera.aperture"
             }
@@ -26,6 +27,7 @@ struct StudioView: View {
             Group {
                 switch model.studioPane {
                 case .backgrounds: BackgroundsTab()
+                case .lenses: LensesTab()
                 case .automation: AutomationTab()
                 case .camera: CameraTab()
                 }
@@ -161,6 +163,7 @@ private struct Inspector: View {
                 }
             }
             .aspectRatio(16 / 9, contentMode: .fit)
+            .overlay(alignment: .bottomLeading) { SwitchingBadge() }
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
             if let message = model.message {

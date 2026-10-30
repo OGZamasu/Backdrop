@@ -30,6 +30,9 @@ final class AppModel: ObservableObject {
     private var forwarding = Set<AnyCancellable>()
     private var activity: NSObjectProtocol?
     private var reportedPipelineStall = false
+    private var lensPoll: Task<Void, Never>?
+    private var changeCounter = 0
+    private let scores = DefaultsScoreStore()
 
     // MARK: State
 
@@ -46,6 +49,16 @@ final class AppModel: ObservableObject {
     /// macOS's own Background or Portrait effect is switched on for Backdrop's camera input. It would fight with the
     /// backdrop chosen here, and an app can't turn it off itself: it's a Control Center setting.
     @Published private(set) var systemEffectsOn = false
+
+    /// The lens (a filter, face effect or game) layered over the picture, if any. Lenses are for the moment, so none is
+    /// remembered across launches.
+    @Published private(set) var lensID: String?
+    /// What is being switched to, from the moment it is chosen until it is actually on the picture. Some things (a live
+    /// window, a video, a face lens finding your face) take a moment, and without this nothing says so.
+    @Published private(set) var switching: String?
+
+    /// What the lens wants to say right now: a score, a hint, "looking for your face".
+    @Published private(set) var lensStatus: LensStatus?
 
     /// Lets the menu bar popover open the Studio on a particular pane, or straight into an action.
     enum StudioRequest { case importFile, liveWindow, generate }
@@ -113,10 +126,16 @@ final class AppModel: ObservableObject {
 
     private func wirePipeline() {
         // Both run on the pipeline queue.
-        camera.onFrame = { [pipeline] buffer, time in pipeline.process(buffer, at: time) }
+        camera.onFrame = { [pipeline] buffer, time in pipeline.submit(buffer, at: time) }
         camera.onStatus = { [weak self] status in Task { @MainActor in self?.cameraStatus(status) } }
         pipeline.onOutput = { [sink] buffer, _ in sink.send(buffer) }
         pipeline.onPreview = { [preview] image in preview.show(image) }
+        pipeline.onApplied = { [weak self] change in
+            Task { @MainActor in
+                guard let self, self.changeCounter == change else { return }
+                self.switching = nil
+            }
+        }
         preview.onDemandChanged = { [pipeline] wanted in pipeline.setPreviewEnabled(wanted) }
     }
 
@@ -149,6 +168,7 @@ final class AppModel: ObservableObject {
     }
 
     func turnOff() {
+        switching = nil
         camera.stop()
         pipeline.stop()
         sink.disconnect()
@@ -208,7 +228,15 @@ final class AppModel: ObservableObject {
         guard library.background(withID: id) != nil else { return }
         selectedID = id
         defaults.set(id.uuidString, forKey: Keys.selected)
-        applySelection()
+        applySelection(change: beginChange(selectedBackground.name))
+    }
+
+    /// Notes that something was just chosen, so the interface can say it is on its way. Nil when nothing is running to show it.
+    private func beginChange(_ name: String) -> Int? {
+        guard isOn else { switching = nil; return nil }
+        changeCounter += 1
+        switching = name
+        return changeCounter
     }
 
     func cycle(by step: Int) {
@@ -220,14 +248,58 @@ final class AppModel: ObservableObject {
         HUD.shared.show(next.name)
     }
 
-    private func applySelection() {
+    private func applySelection(change: Int? = nil) {
         let background = selectedBackground
         let source = BackgroundSourceFactory.make(for: background, library: library)
         (source as? WindowCaptureSource)?.onError = { [weak self] text in
             Task { @MainActor in self?.message = text }
         }
-        pipeline.setBackground(background, source: source)
+        pipeline.setBackground(background, source: source, change: change)
+        Log.lens.notice("background: \(background.name, privacy: .public)")
     }
+
+    // MARK: Lenses
+
+    var selectedLens: LensInfo? { lensID.flatMap(LensCatalog.info(for:)) }
+
+    /// Picks a lens, or takes the current one off with nil.
+    func selectLens(_ id: String?) {
+        let info = id.flatMap(LensCatalog.info(for:))
+        lensID = info?.id
+        let lens = info?.make()
+        pipeline.setLens(lens, change: beginChange(info?.name ?? "no lens"))
+        Log.lens.notice("lens: \(info?.name ?? "none", privacy: .public)")
+        preview.mirrored = !(info?.scored ?? false)
+        lensStatus = lens?.status
+
+        lensPoll?.cancel()
+        guard let lens else { return }
+        // Scores and countdowns change faster than the one-second housekeeping loop.
+        lensPoll = Task { [weak self] in
+            while !Task.isCancelled {
+                let status = lens.status
+                if self?.lensStatus != status { self?.lensStatus = status }
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+        }
+    }
+
+    /// Steps through every lens in the order they are listed, with "no lens" as one more stop.
+    func cycleLens(by step: Int) {
+        let stops: [String?] = [nil] + LensCatalog.all.map(\.id)
+        let index = stops.firstIndex { $0 == lensID } ?? 0
+        let next = stops[(index + step + stops.count) % stops.count]
+        selectLens(next)
+        HUD.shared.show(next.flatMap(LensCatalog.info(for:)).map { "\($0.glyph) \($0.name)" } ?? "No lens")
+    }
+
+    /// New game, clean slate.
+    func restartLens() {
+        pipeline.restartLens()
+        if let info = selectedLens { HUD.shared.show("\(info.glyph) \(info.name): new game") }
+    }
+
+    func bestScore(for id: String) -> Int { scores.best(for: id) }
 
     // MARK: Editing the library
 
@@ -319,6 +391,9 @@ final class AppModel: ObservableObject {
         let registered = [
             hotkeys.register(keyCode: kVK_RightArrow, modifiers: modifiers) { [weak self] in MainActor.assumeIsolated { self?.cycle(by: 1) } },
             hotkeys.register(keyCode: kVK_LeftArrow, modifiers: modifiers) { [weak self] in MainActor.assumeIsolated { self?.cycle(by: -1) } },
+            hotkeys.register(keyCode: kVK_UpArrow, modifiers: modifiers) { [weak self] in MainActor.assumeIsolated { self?.cycleLens(by: 1) } },
+            hotkeys.register(keyCode: kVK_DownArrow, modifiers: modifiers) { [weak self] in MainActor.assumeIsolated { self?.cycleLens(by: -1) } },
+            hotkeys.register(keyCode: kVK_ANSI_R, modifiers: modifiers) { [weak self] in MainActor.assumeIsolated { self?.restartLens() } },
             hotkeys.register(keyCode: kVK_ANSI_B, modifiers: modifiers) { [weak self] in
                 MainActor.assumeIsolated {
                     guard let self else { return }

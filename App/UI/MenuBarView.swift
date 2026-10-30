@@ -46,6 +46,8 @@ struct MenuBarView: View {
                 BackgroundPicker(contentWidth: Self.width - Self.padding * 2)
             }
 
+            LensPicker()
+
             VirtualCameraStatus()
 
             Divider()
@@ -75,6 +77,7 @@ struct MenuBarView: View {
             }
         }
         .aspectRatio(16 / 9, contentMode: .fit)
+        .overlay(alignment: .bottomLeading) { SwitchingBadge() }
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 

@@ -104,23 +104,30 @@ final class Compositor {
 
     // MARK: Compositing
 
-    /// Places the person (`mask` = 255) over `background`. With no mask or background the camera is just fitted.
-    func compose(camera: CIImage, mask: CIImage?, background: CIImage?, params: CompositeParameters = .init()) -> CIImage {
-        let r = rect
-        let cameraTransform = Self.fillTransform(camera.extent, into: r)
-        let fitted = camera.transformed(by: cameraTransform).cropped(to: r)
-        guard let mask, let background else { return fitted }
+    /// The camera scaled to cover the output, cropped to it.
+    func fitted(_ camera: CIImage) -> CIImage {
+        camera.transformed(by: Self.fillTransform(camera.extent, into: rect)).cropped(to: rect)
+    }
 
+    /// The person's cutout on the output's pixels, edges softened and tightened.
+    func refinedMatte(camera: CIImage, mask: CIImage, params: CompositeParameters = .init()) -> CIImage {
         // The matte arrives at Vision's resolution; bring it onto the same pixels as the camera.
+        let cameraTransform = Self.fillTransform(camera.extent, into: rect)
         let matte = mask
             .transformed(by: CGAffineTransform(scaleX: camera.extent.width / mask.extent.width,
                                                y: camera.extent.height / mask.extent.height))
             .transformed(by: cameraTransform)
-            .cropped(to: r)
-        let refined = refine(matte, params)
+            .cropped(to: rect)
+        return refine(matte, params)
+    }
+
+    /// Puts the person (where `matte` is white) over `background`, with the colour tricks.
+    func composite(camera: CIImage, matte refined: CIImage, background: CIImage, params: CompositeParameters = .init()) -> CIImage {
+        let r = rect
+        let base = fitted(camera)
 
         // Colour: nudge the subject toward the background's cast, then let background light wrap the edge.
-        var subject = fitted
+        var subject = base
         if params.colorMatch > 0 {
             refreshTint(from: background)
             subject = applyTint(to: subject, strength: params.colorMatch)
@@ -133,7 +140,14 @@ final class Compositor {
         blend.inputImage = subject
         blend.backgroundImage = background
         blend.maskImage = refined
-        return (blend.outputImage ?? fitted).cropped(to: r)
+        return (blend.outputImage ?? base).cropped(to: r)
+    }
+
+    /// Places the person (`mask` = 255) over `background`. With no mask or background the camera is just fitted.
+    func compose(camera: CIImage, mask: CIImage?, background: CIImage?, params: CompositeParameters = .init()) -> CIImage {
+        guard let mask, let background else { return fitted(camera) }
+        return composite(camera: camera, matte: refinedMatte(camera: camera, mask: mask, params: params),
+                         background: background, params: params)
     }
 
     /// Soften, then re-sharpen around a shifted threshold: smooth edges without a fuzzy halo.

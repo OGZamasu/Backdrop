@@ -7,7 +7,13 @@ final class PreviewRelay {
     private let views = NSHashTable<PreviewLayerView>.weakObjects()
     var onDemandChanged: ((Bool) -> Void)?
 
+    /// Whether previews show you as in a mirror. Turned off for games, whose scores and words would read backwards.
+    var mirrored = true {
+        didSet { DispatchQueue.main.async { for view in self.views.allObjects { view.mirrored = self.mirrored } } }
+    }
+
     func attach(_ view: PreviewLayerView) {
+        view.mirrored = mirrored
         views.add(view)
         onDemandChanged?(true)
     }
@@ -27,6 +33,15 @@ final class PreviewRelay {
 final class PreviewLayerView: NSView {
     let imageLayer = CALayer()
     var relay: PreviewRelay?
+
+    var mirrored = true {
+        didSet {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            imageLayer.setAffineTransform(CGAffineTransform(scaleX: mirrored ? -1 : 1, y: 1))
+            CATransaction.commit()
+        }
+    }
 
     override init(frame: NSRect) {
         super.init(frame: frame)

@@ -9,21 +9,33 @@ final class PersonSegmenter {
         var id: String { rawValue }
     }
 
+    /// May be changed from any thread; it takes effect on the next cutout.
     var quality: Quality {
-        didSet { request.qualityLevel = Self.level(for: quality) }
+        get { lock.withLock { wanted } }
+        set { lock.withLock { wanted = newValue } }
     }
 
+    private let lock = NSLock()
+    private var wanted: Quality
+    private var applied: Quality
     private let request = VNGeneratePersonSegmentationRequest()
     // Kept across frames so Vision can use temporal information.
     private let handler = VNSequenceRequestHandler()
 
     init(quality: Quality = .balanced) {
-        self.quality = quality
+        wanted = quality
+        applied = quality
         request.outputPixelFormat = kCVPixelFormatType_OneComponent8
         request.qualityLevel = Self.level(for: quality)
     }
 
+    /// One at a time: the request and handler belong to whichever thread is cutting out the current frame.
     func mask(for pixelBuffer: CVPixelBuffer) -> CVPixelBuffer? {
+        let level = quality
+        if level != applied {
+            request.qualityLevel = Self.level(for: level)
+            applied = level
+        }
         do { try handler.perform([request], on: pixelBuffer) } catch { return nil }
         return (request.results?.first as? VNPixelBufferObservation)?.pixelBuffer
     }
@@ -88,10 +100,7 @@ final class MaskSmoother {
             let s = src + y * srcStride
             let d = dst + y * dstStride
             if let prev {
-                let p = prev + y * prevStride
-                for x in 0..<width {
-                    d[x] = UInt8((Int(p[x]) * (256 - weight) + Int(s[x]) * weight) >> 8)
-                }
+                Self.blend(prev + y * prevStride, s, into: d, count: width, weight: weight)
             } else {
                 d.update(from: s, count: width)
             }
@@ -114,6 +123,25 @@ final class MaskSmoother {
 
         previous = output
         return output
+    }
+
+    /// `out = (old * (256 - weight) + new * weight) / 256`, 16 pixels at a time. A plain loop here was half the cost of
+    /// every frame in an unoptimised build, and the one thing in the pipeline that scales with every pixel of the matte.
+    private static func blend(_ old: UnsafePointer<UInt8>, _ new: UnsafePointer<UInt8>, into out: UnsafeMutablePointer<UInt8>,
+                              count: Int, weight: Int) {
+        let keep = SIMD16<UInt16>(repeating: UInt16(256 - weight)), take = SIMD16<UInt16>(repeating: UInt16(weight))
+        var x = 0
+        while x + 16 <= count {
+            let a = SIMD16<UInt16>(truncatingIfNeeded: UnsafeRawPointer(old + x).loadUnaligned(as: SIMD16<UInt8>.self))
+            let b = SIMD16<UInt16>(truncatingIfNeeded: UnsafeRawPointer(new + x).loadUnaligned(as: SIMD16<UInt8>.self))
+            let mixed = SIMD16<UInt8>(truncatingIfNeeded: (a &* keep &+ b &* take) &>> 8)
+            UnsafeMutableRawPointer(out + x).storeBytes(of: mixed, as: SIMD16<UInt8>.self)
+            x += 16
+        }
+        while x < count {
+            out[x] = UInt8(truncatingIfNeeded: (Int(old[x]) * (256 - weight) + Int(new[x]) * weight) >> 8)
+            x += 1
+        }
     }
 
     private func makeBuffer(width: Int, height: Int) -> CVPixelBuffer? {

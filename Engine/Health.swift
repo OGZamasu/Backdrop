@@ -43,4 +43,5 @@ enum Log {
     static let camera = Logger(subsystem: subsystem, category: "camera")
     static let sink = Logger(subsystem: subsystem, category: "virtual-camera")
     static let pipeline = Logger(subsystem: subsystem, category: "pipeline")
+    static let lens = Logger(subsystem: subsystem, category: "lens")
 }

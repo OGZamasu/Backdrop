@@ -217,6 +217,38 @@ final class MaskSmootherTests: XCTestCase {
         XCTAssertEqual(TestSupport.matteValue(again, x: 10, y: 10), 63, accuracy: 2)
     }
 
+    /// The blend works 16 pixels at a time; every pixel, including the odd few at the end of a row, must come out exactly as
+    /// the one-at-a-time formula says.
+    func testTheFastBlendMatchesTheFormulaOnEveryPixel() {
+        func buffer(width: Int, height: Int, _ value: (Int, Int) -> UInt8) -> CVPixelBuffer {
+            var created: CVPixelBuffer?
+            CVPixelBufferCreate(nil, width, height, kCVPixelFormatType_OneComponent8,
+                                [kCVPixelBufferIOSurfacePropertiesKey: [:] as [String: Any]] as CFDictionary, &created)
+            let b = created!
+            CVPixelBufferLockBaseAddress(b, [])
+            let base = CVPixelBufferGetBaseAddress(b)!.assumingMemoryBound(to: UInt8.self), stride = CVPixelBufferGetBytesPerRow(b)
+            for y in 0..<height { for x in 0..<width { base[y * stride + x] = value(x, y) } }
+            CVPixelBufferUnlockBaseAddress(b, [])
+            return b
+        }
+        for width in [1, 15, 16, 17, 37, 64, 1280] {
+            let first = buffer(width: width, height: 5) { x, y in UInt8(truncatingIfNeeded: x * 7 + y * 31) }
+            let second = buffer(width: width, height: 5) { x, y in UInt8(truncatingIfNeeded: 255 - x * 13 + y * 5) }
+            let smoother = MaskSmoother()
+            smoother.responsiveness = 0.65
+            _ = smoother.smooth(first)
+            let out = smoother.smooth(second)
+            let weight = Int(0.65 * 256)
+            for y in 0..<5 {
+                for x in 0..<width {
+                    let old = Int(UInt8(truncatingIfNeeded: x * 7 + y * 31)), new = Int(UInt8(truncatingIfNeeded: 255 - x * 13 + y * 5))
+                    let expected = (old * (256 - weight) + new * weight) >> 8
+                    XCTAssertEqual(Int(TestSupport.matteValue(out, x: x, y: y)), expected, "width \(width), pixel \(x),\(y)")
+                }
+            }
+        }
+    }
+
     func testSurvivesResolutionChange() {
         let smoother = MaskSmoother()
         _ = smoother.smooth(TestSupport.matteBuffer(width: 64, height: 36, leftFraction: 1))
