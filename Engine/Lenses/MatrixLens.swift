@@ -68,7 +68,7 @@ enum GlyphAtlas {
         lock.lock(); defer { lock.unlock() }
         if let hit = cache[key] { return hit }
         guard let ctx = CGContext(data: nil, width: Int(cell.width), height: Int(cell.height), bitsPerComponent: 8, bytesPerRow: 0,
-                                  space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: Sprites.bitmapInfo) else { return nil }
         let level = Double(shade) / Double(shades - 1)
         let colour = shade == shades - 1
             ? NSColor(red: 0.8, green: 1, blue: 0.85, alpha: 1)                                    // the head glows white

@@ -29,10 +29,14 @@ final class Compositor {
 
     init(outputSize: CGSize = CGSize(width: 1280, height: 720)) {
         self.outputSize = outputSize
+        // Intermediates are left to Core Image's own cache (its default). With caching off, the usual advice for video, Core
+        // Image marks every blur's scratch surface purgeable after each frame and claims it back on the next: twice the wakeups
+        // per frame (28 against 54, measured at 30 fps) for no saving in memory (about 296 MB either way after half a minute).
+        // A camera buffer that comes round again with a new picture in it is still seen as new; CostPerFrameTests checks that.
         if let device = MTLCreateSystemDefaultDevice() {
-            context = CIContext(mtlDevice: device, options: [.cacheIntermediates: false])
+            context = CIContext(mtlDevice: device)
         } else {
-            context = CIContext(options: [.cacheIntermediates: false])
+            context = CIContext()
         }
         let attributes: [CFString: Any] = [
             kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA,

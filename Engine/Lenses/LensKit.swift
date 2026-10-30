@@ -57,7 +57,7 @@ extension Sprites {
         let side = 64
         let space = CGColorSpace(name: CGColorSpace.sRGB)!
         guard let ctx = CGContext(data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0, space: space,
-                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+                                  bitmapInfo: bitmapInfo) else { return nil }
         let colors = [CGColor(colorSpace: space, components: [red, green, blue, 1])!,
                       CGColor(colorSpace: space, components: [red, green, blue, 0.55])!,
                       CGColor(colorSpace: space, components: [red, green, blue, 0])!] as CFArray

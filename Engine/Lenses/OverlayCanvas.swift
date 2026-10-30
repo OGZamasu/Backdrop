@@ -26,7 +26,7 @@ final class OverlayCanvas {
             CVPixelBufferLockBaseAddress(buffer, [])
             let context = CGContext(data: CVPixelBufferGetBaseAddress(buffer), width: Int(size.width), height: Int(size.height),
                                     bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(buffer), space: space,
-                                    bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue)
+                                    bitmapInfo: Sprites.bitmapInfo)
             CVPixelBufferUnlockBaseAddress(buffer, [])
             guard let context else { return nil }
             context.setAllowsAntialiasing(true)
@@ -57,6 +57,10 @@ final class OverlayCanvas {
 // MARK: - Drawing helpers
 
 enum Sprites {
+    /// The canvas's own pixel layout (BGRA, premultiplied). Every sprite is made in it too: Core Graphics converts a sprite in
+    /// any other layout on every single draw, which made a few hundred sparks cost several milliseconds of CPU a frame.
+    static let bitmapInfo = CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
+
     private static let lock = NSLock()
     private static var cache: [String: CGImage] = [:]
 
@@ -71,8 +75,7 @@ enum Sprites {
         let box = text.size()
         let width = Int(ceil(box.width)) + 8, height = Int(ceil(box.height)) + 8
         guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
-                                      space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+                                      space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: bitmapInfo) else { return nil }
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
         text.draw(at: NSPoint(x: 4, y: 4))

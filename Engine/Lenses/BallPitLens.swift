@@ -123,7 +123,7 @@ final class BallPitLens: Lens {
         let side = 96
         let space = CGColorSpace(name: CGColorSpace.sRGB)!
         guard let ctx = CGContext(data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0, space: space,
-                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+                                  bitmapInfo: Sprites.bitmapInfo) else { return nil }
         let (r, g, b) = Palette.rgb(hue: Double(colour) / Double(BallPit.colours), saturation: 0.85, brightness: 0.95)
         let gradient = CGGradient(colorsSpace: space, colors: [CGColor(red: min(1, r + 0.5), green: min(1, g + 0.5), blue: min(1, b + 0.5), alpha: 1),
                                                                CGColor(red: r, green: g, blue: b, alpha: 1),
