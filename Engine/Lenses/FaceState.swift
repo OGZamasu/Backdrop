@@ -17,6 +17,10 @@ struct FaceState: Equatable {
     var browRaise: Double
     /// Eyebrow height above the eyes, in eye-spacings. The raw measurement behind `browRaise`.
     var browDistance: Double
+    /// 0 with the eyes open to 1 with them shut. Relative to how wide open this face's eyes are.
+    var blink: Double = 0
+    /// 0 at rest to 1 for a broad smile. Relative to how wide this face's mouth is at rest.
+    var smile: Double = 0
 
     var eyeCenter: CGPoint { CGPoint(x: (leftEye.x + rightEye.x) / 2, y: (leftEye.y + rightEye.y) / 2) }
     var interocular: Double { hypot(rightEye.x - leftEye.x, rightEye.y - leftEye.y) }

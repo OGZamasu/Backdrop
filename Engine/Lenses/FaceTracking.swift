@@ -13,6 +13,9 @@ struct RawFace {
     var outerLips: [CGPoint]
     var innerLips: [CGPoint]
     var rect: CGRect
+    /// How far the head is turned and tipped, in radians, when Vision says. Nil is treated as facing the camera.
+    var yaw: Double? = nil
+    var pitch: Double? = nil
 }
 
 /// A face measured in one frame, before smoothing or calibration.
@@ -23,10 +26,18 @@ struct FaceMeasure: Equatable {
     var mouthWidth: Double
     var browCenter: CGPoint
     var rect: CGRect
-    /// How far apart the inner lips are, in eye-spacings.
+    /// How far apart the inner lips are, as a fraction of the distance from the eyes to the mouth. Both are vertical, so turning
+    /// the head to one side doesn't change it, as measuring against the eye spacing would.
     var lipGap: Double
-    /// How far the eyebrows sit above the eyes, in eye-spacings.
+    /// How far the eyebrows sit above the eyes, as a fraction of the distance from the eyes to the mouth.
     var browDistance: Double
+    /// Eye height over eye width for the more open of the two eyes: smaller as the eyes close. Using the more open one means
+    /// a wink doesn't count as a blink.
+    var eyeOpenness: Double = 0.3
+    /// Mouth width over eye spacing (both horizontal, so a turned head leaves it alone): larger in a smile.
+    var mouthWidthRatio: Double = 0.85
+    /// Whether the head is facing the camera closely enough to trust eyebrows, eyes and smile.
+    var facingCamera = true
 }
 
 enum FaceFeatureExtractor {
@@ -50,9 +61,24 @@ enum FaceFeatureExtractor {
         let spread = raw.outerLips.map { ($0.x - mouth.x) * across.dx + ($0.y - mouth.y) * across.dy }
         let mouthWidth = (spread.max() ?? 0) - (spread.min() ?? 0)
 
+        /// How open one eye is: its height over its width, along the face's own axes so a tilted head reads the same.
+        func openness(_ points: [CGPoint]) -> Double? {
+            guard points.count >= 4 else { return nil }
+            let widths = points.map { $0.x * across.dx + $0.y * across.dy }, heights = points.map { $0.x * up.dx + $0.y * up.dy }
+            let w = (widths.max() ?? 0) - (widths.min() ?? 0), h = (heights.max() ?? 0) - (heights.min() ?? 0)
+            return w > 1e-6 ? h / w : nil
+        }
+        let eyes2 = [openness(raw.leftEye), openness(raw.rightEye)].compactMap { $0 }
+        let facing = abs(raw.yaw ?? 0) <= maxYaw && abs(raw.pitch ?? 0) <= maxPitch
+
         return FaceMeasure(leftEye: leftEye, rightEye: rightEye, mouth: mouth, mouthWidth: mouthWidth, browCenter: brows,
-                           rect: raw.rect, lipGap: gap / io, browDistance: height(brows) / io)
+                           rect: raw.rect, lipGap: gap / upLength, browDistance: height(brows) / upLength,
+                           eyeOpenness: eyes2.max() ?? 0.3, mouthWidthRatio: mouthWidth / io, facingCamera: facing)
     }
+
+    /// Past these (about 25 and 22 degrees) the face is turned enough that eyebrows, eyes and smiles stop being readable.
+    static let maxYaw = 0.44
+    static let maxPitch = 0.38
 
     private static func mean(_ points: [CGPoint]) -> CGPoint? {
         guard !points.isEmpty else { return nil }
@@ -61,7 +87,7 @@ enum FaceFeatureExtractor {
     }
 
     /// 0 for lips together, 1 for a wide yawn.
-    static func mouthOpen(lipGap: Double) -> Double { clamp((lipGap - 0.05) / 0.45) }
+    static func mouthOpen(lipGap: Double) -> Double { clamp((lipGap - 0.05) / 0.43) }
 
     static func clamp(_ v: Double) -> Double { min(1, max(0, v)) }
 }
@@ -70,16 +96,26 @@ enum FaceFeatureExtractor {
 struct FaceSmoother {
     /// How long a face may vanish (a blink of the tracker, a hand across it) before it is reported gone.
     static let holdSeconds = 0.35
-    /// How much higher than rest the brows must go for `browRaise` to read 1, in eye-spacings.
+    /// How much higher than rest the brows must go for `browRaise` to read 1, as a fraction of the eyes-to-mouth distance.
     static let browRange = 0.14
+
+    /// How much narrower than wide-open the eyes must get for `blink` to read 1. A squint in a big smile closes them a quarter
+    /// or so; a blink closes them most of the way.
+    static let blinkRange = 0.7
+    /// How much wider than rest the mouth must get for `smile` to read 1, in eye-spacings.
+    static let smileRange = 0.14
 
     private var state: FaceState?
     private var baseline: Double?
+    private var eyeBaseline: Double?
+    private var mouthBaseline: Double?
     private var lostFor = 0.0
 
     mutating func reset() {
         state = nil
         baseline = nil
+        eyeBaseline = nil
+        mouthBaseline = nil
         lostFor = 0
     }
 
@@ -90,20 +126,48 @@ struct FaceSmoother {
             return state
         }
         lostFor = 0
-
-        // The resting brow height only creeps up slowly, but drops straight away: a raised brow is never mistaken for rest for long.
-        if var b = baseline {
-            if m.browDistance < b { b += (m.browDistance - b) * min(1, dt * 6) } else { b += (m.browDistance - b) * min(1, dt * 0.04) }
-            baseline = b
-        } else {
-            baseline = m.browDistance
-        }
-        let raise = FaceFeatureExtractor.clamp((m.browDistance - (baseline ?? m.browDistance)) / Self.browRange)
         let open = FaceFeatureExtractor.mouthOpen(lipGap: m.lipGap)
+
+        // Eyebrows, eyes and smile are only read while the face looks at the camera. Turned or tipped, their measurements
+        // change for reasons that have nothing to do with the expression, and the rest levels are left as they were.
+        var raise = 0.0, shut = 0.0, grin = 0.0
+        if m.facingCamera {
+            // Brows: the resting height drops quickly (a raised brow is never mistaken for rest for long) and rises slowly,
+            // and only while the brows aren't up, so holding them there doesn't teach it a new rest.
+            if var b = baseline {
+                let up = (m.browDistance - b) / Self.browRange
+                if m.browDistance < b { b += (m.browDistance - b) * min(1, dt * 2) } else if up < 0.25 { b += (m.browDistance - b) * min(1, dt * 0.08) }
+                baseline = b
+            } else {
+                baseline = m.browDistance
+            }
+            raise = FaceFeatureExtractor.clamp((m.browDistance - (baseline ?? m.browDistance)) / Self.browRange)
+
+            // Eyes: how open they are at their widest lately is "open"; a blink is how far below that they are now.
+            if var e = eyeBaseline {
+                e += (m.eyeOpenness - e) * min(1, dt * (m.eyeOpenness > e ? 1.5 : 0.1))
+                eyeBaseline = e
+            } else {
+                eyeBaseline = m.eyeOpenness
+            }
+            let eyeRest = max(eyeBaseline ?? m.eyeOpenness, 1e-6)
+            shut = FaceFeatureExtractor.clamp((eyeRest - m.eyeOpenness) / (eyeRest * Self.blinkRange))
+
+            // Mouth: its width when not smiling is "rest", followed over about ten seconds; a smile is wider than that.
+            if var w = mouthBaseline {
+                let wide = (m.mouthWidthRatio - w) / Self.smileRange
+                if wide < 0.25 { w += (m.mouthWidthRatio - w) * min(1, dt * 0.1) }     // a held smile doesn't become the new rest
+                mouthBaseline = w
+            } else {
+                mouthBaseline = m.mouthWidthRatio
+            }
+            grin = FaceFeatureExtractor.clamp((m.mouthWidthRatio - (mouthBaseline ?? m.mouthWidthRatio)) / Self.smileRange)
+        }
 
         guard let old = state else {
             let fresh = FaceState(leftEye: m.leftEye, rightEye: m.rightEye, mouth: m.mouth, mouthWidth: m.mouthWidth,
-                                  browCenter: m.browCenter, rect: m.rect, mouthOpen: open, browRaise: raise, browDistance: m.browDistance)
+                                  browCenter: m.browCenter, rect: m.rect, mouthOpen: open, browRaise: raise, browDistance: m.browDistance,
+                                  blink: shut, smile: grin)
             state = fresh
             return fresh
         }
@@ -118,7 +182,10 @@ struct FaceSmoother {
             rect: CGRect(x: blend(old.rect.minX, m.rect.minX, place), y: blend(old.rect.minY, m.rect.minY, place),
                          width: blend(old.rect.width, m.rect.width, 0.1), height: blend(old.rect.height, m.rect.height, 0.1)),
             mouthOpen: blend(old.mouthOpen, open, 0.05), browRaise: blend(old.browRaise, raise, 0.09),
-            browDistance: blend(old.browDistance, m.browDistance, 0.09))
+            browDistance: blend(old.browDistance, m.browDistance, 0.09),
+            // A blink is over in a tenth of a second and the tracker looks every 40 ms, so it comes up quickly and lets go slowly.
+            // A smile has to last a moment to count, so the "ee" in a word doesn't.
+            blink: blend(old.blink, shut, shut > old.blink ? 0.02 : 0.1), smile: blend(old.smile, grin, grin > old.smile ? 0.25 : 0.12))
         state = smoothed
         return smoothed
     }
@@ -133,8 +200,8 @@ final class FaceTrackingService {
     private let lock = NSLock()
     private var busy = false
     private var lastSubmit = 0.0
-    /// At most this often: landmarks are plenty smooth at 20 a second, and it leaves the neural engine to the cutout.
-    static let minInterval = 0.05
+    /// At most this often (25 a second): enough to catch a blink, and it leaves the neural engine to the cutout.
+    static let minInterval = 0.04
     private var found: (face: RawFace?, at: CFTimeInterval)?
     // For the log: how often it looks, how often it finds a face, and how long a look takes.
     private var looks = 0, hits = 0, slowest = 0.0, lastReport = CACurrentMediaTime()
@@ -181,6 +248,8 @@ final class FaceTrackingService {
 
     private static func detect(in buffer: CVPixelBuffer, transform: CGAffineTransform) -> RawFace? {
         let request = VNDetectFaceLandmarksRequest()
+        // Left at "not defined" the request may give the older 65-point set; ask for the 76-point one on purpose.
+        if VNDetectFaceLandmarksRequest.revision(request.revision, supportsConstellation: .constellation76Points) { request.constellation = .constellation76Points }
         let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: .up, options: [:])
         do { try handler.perform([request]) } catch { return nil }
         // Several people in view: follow the biggest, the one closest to the camera.
@@ -194,6 +263,7 @@ final class FaceTrackingService {
         return RawFace(leftEye: points(landmarks.leftEye), rightEye: points(landmarks.rightEye),
                        leftBrow: points(landmarks.leftEyebrow), rightBrow: points(landmarks.rightEyebrow),
                        outerLips: points(landmarks.outerLips), innerLips: points(landmarks.innerLips),
-                       rect: VNImageRectForNormalizedRect(face.boundingBox, Int(size.width), Int(size.height)).applying(transform))
+                       rect: VNImageRectForNormalizedRect(face.boundingBox, Int(size.width), Int(size.height)).applying(transform),
+                       yaw: face.yaw?.doubleValue, pitch: face.pitch?.doubleValue)
     }
 }

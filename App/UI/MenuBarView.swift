@@ -105,6 +105,17 @@ struct VirtualCameraStatus: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+        } else if model.cameraMissing, model.installer.state == .idle {
+            VStack(alignment: .leading, spacing: 6) {
+                Label("macOS hasn't started Backdrop Camera yet.", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.orange)
+                Text("This can happen after an update while other apps are using the camera. Quit them (Discord, your browser, FaceTime), then restart Backdrop. If it's still missing, restart your Mac.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Restart Backdrop") { model.relaunch() }.controlSize(.small)
+            }
         } else {
             switch model.installer.state {
             case .finished:
@@ -115,6 +126,10 @@ struct VirtualCameraStatus: View {
                         .fixedSize(horizontal: false, vertical: true)
                     Button("Restart Backdrop") { model.relaunch() }.controlSize(.small)
                 }
+            case .needsReboot:
+                Text("Backdrop Camera will be ready after you restart your Mac.")
+                    .font(.caption)
+                    .fixedSize(horizontal: false, vertical: true)
             case .needsApproval:
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Almost there: approve Backdrop Camera in System Settings › General › Login Items & Extensions › Camera Extensions.")

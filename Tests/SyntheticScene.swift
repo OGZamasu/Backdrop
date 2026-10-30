@@ -25,6 +25,10 @@ struct SyntheticScene {
     var roll: Double = 0
     var mouthOpen: Double = 0
     var browRaise: Double = 0
+    /// 0 eyes open, 1 shut.
+    var blink: Double = 0
+    /// 0 neutral, 1 a broad smile.
+    var smile: Double = 0
 
     // Head-relative layout, before roll.
     private var io: Double { 84 * scale }
@@ -39,10 +43,10 @@ struct SyntheticScene {
         let browDistance = 0.40 + 0.28 * browRaise
         let browHeight = eyeHeight + io * browDistance
         return FaceState(leftEye: rotated(-io / 2, eyeHeight), rightEye: rotated(io / 2, eyeHeight),
-                         mouth: rotated(0, mouthHeight), mouthWidth: 70 * scale,
+                         mouth: rotated(0, mouthHeight), mouthWidth: 70 * scale * (1 + 0.35 * smile),
                          browCenter: rotated(0, browHeight),
                          rect: CGRect(x: center.x - 95 * scale, y: center.y - 120 * scale, width: 190 * scale, height: 240 * scale),
-                         mouthOpen: mouthOpen, browRaise: browRaise, browDistance: browDistance)
+                         mouthOpen: mouthOpen, browRaise: browRaise, browDistance: browDistance, blink: blink, smile: smile)
     }
 
     // MARK: Pictures
@@ -77,8 +81,8 @@ struct SyntheticScene {
         ctx.fillEllipse(in: CGRect(x: -80 * scale, y: -10 * scale, width: 160 * scale, height: 70 * scale))   // forehead showing under the fringe
         for side in [-1.0, 1.0] {                                                                      // eyes
             let ex = side * io / 2
-            ctx.setFillColor(.white); ctx.fillEllipse(in: CGRect(x: ex - 17 * scale, y: eyeHeight - 11 * scale, width: 34 * scale, height: 22 * scale))
-            ctx.setFillColor(CGColor(red: 0.15, green: 0.1, blue: 0.08, alpha: 1)); ctx.fillCircle(center: CGPoint(x: ex, y: eyeHeight), radius: 7 * scale, color: CGColor(red: 0.15, green: 0.1, blue: 0.08, alpha: 1))
+            ctx.setFillColor(.white); ctx.fillEllipse(in: CGRect(x: ex - 17 * scale, y: eyeHeight - 11 * scale * (1 - 0.85 * blink), width: 34 * scale, height: 22 * scale * (1 - 0.85 * blink)))
+            if blink < 0.5 { ctx.fillCircle(center: CGPoint(x: ex, y: eyeHeight), radius: 7 * scale, color: CGColor(red: 0.15, green: 0.1, blue: 0.08, alpha: 1)) }
             let browY = eyeHeight + io * (0.40 + 0.28 * browRaise)
             ctx.setStrokeColor(CGColor(red: 0.18, green: 0.11, blue: 0.08, alpha: 1)); ctx.setLineWidth(7 * scale); ctx.setLineCap(.round)
             ctx.move(to: CGPoint(x: ex - 20 * scale, y: browY)); ctx.addLine(to: CGPoint(x: ex + 20 * scale, y: browY)); ctx.strokePath()
@@ -87,7 +91,8 @@ struct SyntheticScene {
         ctx.move(to: CGPoint(x: 0, y: eyeHeight - 8 * scale)); ctx.addLine(to: CGPoint(x: 0, y: -28 * scale)); ctx.strokePath()
         let mouthHeightPx = (6 + 46 * mouthOpen) * scale
         ctx.setFillColor(CGColor(red: 0.45, green: 0.08, blue: 0.10, alpha: 1))
-        ctx.fillEllipse(in: CGRect(x: -35 * scale, y: mouthHeight - mouthHeightPx / 2, width: 70 * scale, height: mouthHeightPx))
+        let mouthWidthPx = 70 * scale * (1 + 0.35 * smile)
+        ctx.fillEllipse(in: CGRect(x: -mouthWidthPx / 2, y: mouthHeight - mouthHeightPx / 2, width: mouthWidthPx, height: mouthHeightPx))
         ctx.restoreGState()
         CVPixelBufferUnlockBaseAddress(buffer, [])
         return buffer

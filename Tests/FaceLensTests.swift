@@ -379,7 +379,7 @@ final class LensCatalogTests: XCTestCase {
             XCTAssertEqual(lens.needs.contains(.face), info.needsFace, "\(info.name): the catalog and the lens agree on needing a face")
             XCTAssertFalse(info.blurb.isEmpty)
         }
-        for category in LensInfo.Category.allCases { XCTAssertFalse(LensCatalog.lenses(in: category).isEmpty) }
+        for category in LensInfo.Category.allCases where category != .custom { XCTAssertFalse(LensCatalog.lenses(in: category).isEmpty) }   // My Lenses is the user's
         XCTAssertNotNil(LensCatalog.info(for: "flappy-face"))
         XCTAssertNil(LensCatalog.info(for: "nope"))
     }

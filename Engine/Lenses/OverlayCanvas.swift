@@ -78,6 +78,8 @@ enum Sprites {
         text.draw(at: NSPoint(x: 4, y: 4))
         NSGraphicsContext.restoreGraphicsState()
         guard let image = context.makeImage() else { return nil }
+        // Lenses can name any emoji; don't let the cache grow without end.
+        if cache.count > 96 { cache.removeAll() }
         cache[key] = image
         return image
     }

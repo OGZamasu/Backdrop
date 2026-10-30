@@ -6,6 +6,8 @@ struct LensInfo: Identifiable, Hashable {
         case filters = "Filters"
         case faces = "Faces"
         case games = "Games"
+        /// Lenses from the user's own Lenses folder.
+        case custom = "My Lenses"
         var id: String { rawValue }
     }
 
@@ -21,6 +23,15 @@ struct LensInfo: Identifiable, Hashable {
     /// Whether it needs your face to be in view.
     let needsFace: Bool
     let make: () -> Lens
+    // Only lenses from a folder have these.
+    var author: String? = nil
+    var tags: [String] = []
+    var warnings: [String] = []
+    /// When its lens.json last changed, so an edited lens can be picked up again.
+    var modified: Date? = nil
+    var folder: URL? = nil
+    /// Whether it puts words on the picture, which would read backwards in a mirrored preview.
+    var showsText = false
 
     static func == (a: LensInfo, b: LensInfo) -> Bool { a.id == b.id }
     func hash(into hasher: inout Hasher) { hasher.combine(id) }

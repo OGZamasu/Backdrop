@@ -20,6 +20,7 @@ final class AppModel: ObservableObject {
     let rules = RuleStore()
     let installer = ExtensionInstaller()
     let preview = PreviewRelay()
+    let lensLibrary = LensLibrary()
 
     private let pipeline = FramePipeline()
     private let camera: CameraCapture
@@ -32,6 +33,7 @@ final class AppModel: ObservableObject {
     private var reportedPipelineStall = false
     private var lensPoll: Task<Void, Never>?
     private var changeCounter = 0
+    private var lensModified: Date?
     private let scores = DefaultsScoreStore()
 
     // MARK: State
@@ -39,6 +41,11 @@ final class AppModel: ObservableObject {
     @Published private(set) var isOn = false
     @Published private(set) var isStarting = false
     @Published private(set) var virtualCameraInstalled = false
+    /// macOS lists the camera extension as installed and enabled, yet no "Backdrop Camera" has turned up for a while.
+    /// Seen after an upgrade while other apps were using the camera: the new extension is not started until they let go.
+    @Published private(set) var cameraMissing = false
+    private var missingMonitor = CameraMissingMonitor()
+    private var pollCount = 0
     @Published private(set) var cameras: [AVCaptureDevice] = []
     @Published private(set) var selectedID: UUID
     /// A problem worth showing the user, such as a denied permission.
@@ -105,6 +112,11 @@ final class AppModel: ObservableObject {
         library.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &forwarding)
         rules.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &forwarding)
         installer.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &forwarding)
+        lensLibrary.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &forwarding)
+        // Someone editing a lens in another app changes the files; coming back to Backdrop picks the changes up.
+        NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
+            .sink { [weak self] _ in MainActor.assumeIsolated { self?.reloadLenses() } }
+            .store(in: &forwarding)
 
         wirePipeline()
         if library.background(withID: selectedID) == nil { selectedID = Background.softBlur.id }
@@ -260,16 +272,28 @@ final class AppModel: ObservableObject {
 
     // MARK: Lenses
 
-    var selectedLens: LensInfo? { lensID.flatMap(LensCatalog.info(for:)) }
+    var selectedLens: LensInfo? { lensID.flatMap(lensLibrary.info(for:)) }
+
+    /// Looks in the Lenses folder again. A lens that is on and has changed on disk is put on afresh; one that is gone comes off.
+    func reloadLenses() {
+        Task { [weak self] in
+            guard let self else { return }
+            await lensLibrary.reloadAsync()
+            guard let id = lensID else { return }
+            guard let info = lensLibrary.info(for: id) else { selectLens(nil); return }
+            if info.modified != lensModified { selectLens(id) }
+        }
+    }
 
     /// Picks a lens, or takes the current one off with nil.
     func selectLens(_ id: String?) {
-        let info = id.flatMap(LensCatalog.info(for:))
+        let info = id.flatMap(lensLibrary.info(for:))
         lensID = info?.id
+        lensModified = info?.modified
         let lens = info?.make()
         pipeline.setLens(lens, change: beginChange(info?.name ?? "no lens"))
         Log.lens.notice("lens: \(info?.name ?? "none", privacy: .public)")
-        preview.mirrored = !(info?.scored ?? false)
+        preview.mirrored = !(info?.scored == true || info?.showsText == true)
         lensStatus = lens?.status
 
         lensPoll?.cancel()
@@ -286,11 +310,11 @@ final class AppModel: ObservableObject {
 
     /// Steps through every lens in the order they are listed, with "no lens" as one more stop.
     func cycleLens(by step: Int) {
-        let stops: [String?] = [nil] + LensCatalog.all.map(\.id)
+        let stops: [String?] = [nil] + lensLibrary.all.map(\.id)
         let index = stops.firstIndex { $0 == lensID } ?? 0
         let next = stops[(index + step + stops.count) % stops.count]
         selectLens(next)
-        HUD.shared.show(next.flatMap(LensCatalog.info(for:)).map { "\($0.glyph) \($0.name)" } ?? "No lens")
+        HUD.shared.show(next.flatMap(lensLibrary.info(for:)).map { "\($0.glyph) \($0.name)" } ?? "No lens")
     }
 
     /// New game, clean slate.
@@ -420,6 +444,14 @@ final class AppModel: ObservableObject {
                 guard let self else { return }
                 let present = self.sink.isDevicePresent
                 if present != self.virtualCameraInstalled { self.virtualCameraInstalled = present }
+                let missing = self.missingMonitor.poll(installedAndEnabled: self.installer.isInstalledAndEnabled, deviceVisible: present)
+                if missing != self.cameraMissing {
+                    self.cameraMissing = missing
+                    if missing { Log.sink.notice("the camera extension is installed and enabled, but Backdrop Camera isn't being offered") }
+                }
+                // While it is missing, keep asking macOS what it thinks, so the advice follows the facts (switched off, replaced, gone).
+                self.pollCount += 1
+                if self.cameraMissing, self.pollCount % 30 == 0 { self.installer.refreshProperties() }
                 let effectsOn = AVCaptureDevice.isBackgroundReplacementEnabled || AVCaptureDevice.isPortraitEffectEnabled
                 if effectsOn != self.systemEffectsOn { self.systemEffectsOn = effectsOn }
                 if self.isOn {

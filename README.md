@@ -7,7 +7,7 @@ On top of the system background effect it adds:
 - **Live backgrounds**: looping video, a live window or your whole screen, animated gradients, the old Windows **3D Pipes** and **3D Maze** screensavers (rendered in 3D with SceneKit), and a parallax option that drifts the backdrop as you move.
 - **AI backgrounds**: describe a room and Image Playground generates it on-device.
 - **Automation**: switch by app (Zoom → this one), calendar event (title contains "client"), or time of day. Global shortcuts: ⌃⌥→ / ⌃⌥← cycle backgrounds, ⌃⌥↑ / ⌃⌥↓ cycle lenses, ⌃⌥R new game, ⌃⌥B camera on/off.
-- **Lenses**: Snapchat-style filters, face effects and games layered over the picture, and sent to everyone on your call. Ten filters (aura, ghost trails, comic book, pixel art, glitch, Matrix rain, mirror, kaleidoscope, snowfall), ten face lenses (cat ears, sunglasses, crown, party hat, big eyes, chipmunk cheeks, rainbow and fire breath, laser eyes) and five games (Balloon Pop, Breakout with you as the paddle, a ball pit, Mouth Catch, Flappy Face with your face as the bird). See [Lenses](#lenses).
+- **Lenses**: Snapchat-style filters, face effects and games layered over the picture, and sent to everyone on your call. Ten filters (aura, ghost trails, comic book, pixel art, glitch, Matrix rain, mirror, kaleidoscope, snowfall), ten face lenses (cat ears, sunglasses, crown, party hat, big eyes, chipmunk cheeks, big mouth, rainbow and fire breath, laser eyes) and five games (Balloon Pop, Breakout with you as the paddle, a ball pit, Mouth Catch, Flappy Face with your face as the bird). You can make your own too: a lens is a folder with a `lens.json`, see [docs/LENS_FORMAT.md](docs/LENS_FORMAT.md). See [Lenses](#lenses).
 - **Cutout controls**: quality, edge softness, light wrap (background glow on your edges), colour match.
 
 ## Download
@@ -30,7 +30,9 @@ Pick one from the **Lenses** row in the menu bar popover, or the **Lenses** pane
 
 The preview mirrors you like a mirror, except while a game is on, when it shows exactly what other people see so the score and words read the right way round.
 
-Adding one: implement `Lens` (`Engine/Lenses/Lens.swift`), or for a game `Game` (`GameKit.swift`), and list it in `LensCatalog`. Game rules are plain structs with no pipeline in them, so they are tested exactly; `Tests/SyntheticScene.swift` draws a fake person, room and face so lenses can be rendered to PNGs (`TEST_RUNNER_BACKDROP_TEST_OUTPUT=some/folder xcodebuild test ...`) and looked at.
+**Your own lenses** live in `~/Library/Application Support/Backdrop/Lenses/` (Studio › Lenses › ⋯ › Open Lenses Folder). Each is a folder with a `lens.json` that pins pictures, emoji, text and shapes to the face, switches things on with a smile, a blink, an open mouth or raised eyebrows, warps parts of the face, emits particles and tints the picture. No code, so they are safe to share. Five examples are put there the first time; the format, and the limits that keep a stranger's lens from slowing you down, are in [docs/LENS_FORMAT.md](docs/LENS_FORMAT.md). While a lens with text on it is on, the preview shows what other people see rather than a mirror, so the words read the right way round.
+
+Adding a built-in one: implement `Lens` (`Engine/Lenses/Lens.swift`), or for a game `Game` (`GameKit.swift`), and list it in `LensCatalog`. Game rules are plain structs with no pipeline in them, so they are tested exactly; `Tests/SyntheticScene.swift` draws a fake person, room and face so lenses can be rendered to PNGs (`TEST_RUNNER_BACKDROP_TEST_OUTPUT=some/folder xcodebuild test ...`) and looked at.
 
 ## Requirements
 
@@ -44,7 +46,9 @@ Adding one: implement `Lens` (`Engine/Lenses/Lens.swift`), or for a game `Game` 
 ```
 Engine/           Camera, person segmentation, compositing, background sources, rules.
                   No UI. Compiled into both the app and the tests.
-Engine/Lenses/    Lenses: filters, face effects, games, face tracking, the silhouette physics.
+Engine/Lenses/    Lenses: filters, face effects, games, face tracking, the silhouette physics,
+                  and Packs/ for lenses made of plain files.
+docs/             The lens file format.
 App/              Menu bar app, Studio window, automation, hotkeys, virtual camera bridge.
 CameraExtension/  The system extension. It only forwards frames the app pushes into its sink stream.
 Tests/            Engine tests (no camera or signing needed).
@@ -131,8 +135,8 @@ It uses the Apple ID Xcode is signed in to (no certificate to export, no passwor
   while Backdrop is running), the popover warns, because the app can't switch it off itself.
 - The camera is switched on and off by hand (menu or ⌃⌥B). It does not yet start automatically when another app opens Backdrop Camera.
 - Face tracking is tested against synthetic landmarks and cartoon faces, not recorded real ones, so prop placement
-  (crown, ears, hat) and the mouth and eyebrow thresholds are the first things to tune on real faces. The lens status
-  line in the popover shows live mouth and eyebrow percentages for exactly that.
+  (crown, ears, hat) and the mouth, eyebrow, blink and smile thresholds are the first things to tune on real faces. The lens
+  status line in the popover shows all four live readings for exactly that.
 - Games read your body from the cutout, so a person in front of a busy background or in poor light plays worse.
   There is no hand tracking yet (an "air draw" lens is the obvious next one).
 - The camera extension and the app-to-extension handoff have no automated tests: they need a signed install and camera permission.

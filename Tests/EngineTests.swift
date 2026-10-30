@@ -459,3 +459,38 @@ final class SourcesTests: XCTestCase {
         XCTAssertNil(ImageSource(url: URL(fileURLWithPath: "/nonexistent/nope.png")).frame(at: 0, camera: TestSupport.solid(0, 0, 0)))
     }
 }
+
+// MARK: - Camera extension rules
+
+final class CameraExtensionPolicyTests: XCTestCase {
+    func testOnlyANewerBuildReplacesWhatIsInstalled() {
+        XCTAssertTrue(CameraExtensionPolicy.shouldReplace(existingBuild: "7", withBuild: "8"))
+        XCTAssertTrue(CameraExtensionPolicy.shouldReplace(existingBuild: "9", withBuild: "10"), "numbers, not text: 10 is newer than 9")
+        XCTAssertFalse(CameraExtensionPolicy.shouldReplace(existingBuild: "8", withBuild: "8"), "never a copy for itself")
+        XCTAssertFalse(CameraExtensionPolicy.shouldReplace(existingBuild: "9", withBuild: "7"), "never back to an older one")
+        XCTAssertTrue(CameraExtensionPolicy.shouldReplace(existingBuild: "x", withBuild: "8"), "unreadable versions don't block an update")
+    }
+
+    func testUpgradingNeedsSomethingInstalledAndTheAppsCopyToBeNewer() {
+        XCTAssertTrue(CameraExtensionPolicy.shouldUpgrade(installedBuilds: ["7"], embeddedBuild: "8"))
+        XCTAssertFalse(CameraExtensionPolicy.shouldUpgrade(installedBuilds: ["8"], embeddedBuild: "8"))
+        XCTAssertFalse(CameraExtensionPolicy.shouldUpgrade(installedBuilds: ["9"], embeddedBuild: "8"), "a development build beside a newer install leaves it alone")
+        XCTAssertFalse(CameraExtensionPolicy.shouldUpgrade(installedBuilds: [], embeddedBuild: "8"), "a first install is the user's to start")
+        XCTAssertFalse(CameraExtensionPolicy.shouldUpgrade(installedBuilds: ["7", "9"], embeddedBuild: "8"), "newer than all of them, not just one")
+    }
+
+    func testTheCameraIsOnlyCalledMissingAfterAWhileAndOnlyIfItShouldBeThere() {
+        var monitor = CameraMissingMonitor()
+        for _ in 0..<9 { XCTAssertFalse(monitor.poll(installedAndEnabled: true, deviceVisible: false)) }
+        XCTAssertTrue(monitor.poll(installedAndEnabled: true, deviceVisible: false), "ten seconds of absence")
+        XCTAssertFalse(monitor.poll(installedAndEnabled: true, deviceVisible: true), "and it's cleared the moment the camera shows")
+
+        var notInstalled = CameraMissingMonitor()
+        for _ in 0..<30 { XCTAssertFalse(notInstalled.poll(installedAndEnabled: false, deviceVisible: false), "nothing installed, nothing missing") }
+
+        var flicker = CameraMissingMonitor()
+        for _ in 0..<5 { _ = flicker.poll(installedAndEnabled: true, deviceVisible: false) }
+        _ = flicker.poll(installedAndEnabled: true, deviceVisible: true)
+        for _ in 0..<9 { XCTAssertFalse(flicker.poll(installedAndEnabled: true, deviceVisible: false), "the count starts again after it was seen") }
+    }
+}

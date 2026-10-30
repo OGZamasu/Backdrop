@@ -33,7 +33,8 @@ struct FaceHint {
 
     func status(_ hint: String) -> LensStatus {
         guard let f = latest else { return LensStatus("Looking for your face…", detail: "Face the camera in good light") }
-        return LensStatus(hint, detail: "Mouth \(Int((f.mouthOpen * 100).rounded()))% · Brows \(Int((f.browRaise * 100).rounded()))%")
+        func pct(_ v: Double) -> Int { Int((v * 100).rounded()) }
+        return LensStatus(hint, detail: "Mouth \(pct(f.mouthOpen))% · Brows \(pct(f.browRaise))% · Blink \(pct(f.blink))% · Smile \(pct(f.smile))%")
     }
 }
 

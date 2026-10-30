@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// One lens in a grid: its emoji and name. `info` nil is the "no lens" chip.
 private struct LensChip: View {
@@ -82,6 +83,8 @@ struct LensPicker: View {
     @State private var category: LensInfo.Category = .filters
 
     var body: some View {
+        let library = model.lensLibrary
+        let categories = library.categories
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text("Lenses").font(.subheadline.weight(.medium))
@@ -89,22 +92,26 @@ struct LensPicker: View {
                 if model.lensID != nil { Button("Remove") { model.selectLens(nil) }.buttonStyle(.link).font(.caption) }
             }
             Picker("Lens type", selection: $category) {
-                ForEach(LensInfo.Category.allCases) { Text($0.rawValue).tag($0) }
+                ForEach(categories) { Text($0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
 
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 5), spacing: 6) {
-                ForEach(LensCatalog.lenses(in: category)) { info in
-                    LensChip(info: info, selected: model.lensID == info.id) {
-                        model.selectLens(model.lensID == info.id ? nil : info.id)
+            ScrollView {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 5), spacing: 6) {
+                    ForEach(library.lenses(in: categories.contains(category) ? category : .filters)) { info in
+                        LensChip(info: info, selected: model.lensID == info.id) {
+                            model.selectLens(model.lensID == info.id ? nil : info.id)
+                        }
                     }
                 }
             }
+            // A popover sizes itself from its content, and a scroll view has none to give: fit two rows, scroll for more.
+            .frame(height: 2 * 56 + 6)
             LensStatusLine()
         }
         .onChange(of: model.lensID) { _, id in
-            if let id, let info = LensCatalog.info(for: id) { category = info.category }
+            if let id, let info = library.info(for: id) { category = info.category }
         }
     }
 }
@@ -113,27 +120,55 @@ struct LensPicker: View {
 
 struct LensesTab: View {
     @EnvironmentObject private var model: AppModel
+    @State private var query = ""
+    @State private var importing = false
+    @State private var importError: String?
+
+    private var library: LensLibrary { model.lensLibrary }
+
+    private func matches(_ info: LensInfo) -> Bool {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !q.isEmpty else { return true }
+        return ([info.name, info.blurb, info.author ?? ""] + info.tags).contains { $0.lowercased().contains(q) }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             PaneHeader(title: "Lenses") {
-                if model.lensID != nil { Button("Remove Lens") { model.selectLens(nil) } }
+                HStack(spacing: 10) {
+                    TextField("Search", text: $query)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 170)
+                    Menu {
+                        Button("Add Lens…", systemImage: "plus") { importing = true }
+                        Button("Open Lenses Folder", systemImage: "folder") { library.showFolder() }
+                        Button("Reload", systemImage: "arrow.clockwise") { model.reloadLenses() }
+                        if model.lensID != nil {
+                            Divider()
+                            Button("Remove Lens") { model.selectLens(nil) }
+                        }
+                    } label: {
+                        Label("Lenses", systemImage: "ellipsis.circle")
+                    }
+                    .fixedSize()
+                }
             }
             Divider()
             HStack(spacing: 0) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 22) {
-                        ForEach(LensInfo.Category.allCases) { category in
-                            VStack(alignment: .leading, spacing: 10) {
-                                Text(category.rawValue).font(.headline)
-                                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
-                                    ForEach(LensCatalog.lenses(in: category)) { info in
-                                        LensCard(info: info)
-                                    }
-                                }
-                            }
+                        if !library.problems.isEmpty { problemsBanner }
+                        if query.isEmpty, !library.favouriteLenses.isEmpty {
+                            section("Favourites", library.favouriteLenses)
                         }
-                        Text("Face lenses need good light and your face in view. Games pause when you leave the picture and start again when you step back in. Switch lenses with ⌃⌥↑ and ⌃⌥↓, start a new game with ⌃⌥R.")
+                        ForEach(library.categories) { category in
+                            let items = library.lenses(in: category).filter(matches)
+                            if !items.isEmpty { section(category.rawValue, items) }
+                        }
+                        if library.all.filter(matches).isEmpty {
+                            Text("No lens matches “\(query)”.").foregroundStyle(.secondary)
+                        }
+                        Text("Face lenses need good light and your face in view. Games pause when you leave the picture and start again when you step back in. Switch lenses with ⌃⌥↑ and ⌃⌥↓, start a new game with ⌃⌥R.\n\nTo make your own, copy a folder from the Lenses folder and edit its lens.json (see docs/LENS_FORMAT.md in the Backdrop repository).")
                             .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     }
                     .padding(20)
@@ -142,6 +177,43 @@ struct LensesTab: View {
                 LensInspector().frame(width: 300)
             }
         }
+        .onAppear { model.reloadLenses() }
+        .fileImporter(isPresented: $importing, allowedContentTypes: [.folder], allowsMultipleSelection: true) { result in
+            guard case .success(let urls) = result else { return }
+            for url in urls {
+                do { try library.add(url) } catch { importError = "\(url.lastPathComponent): \(error.localizedDescription)" }
+            }
+        }
+        .alert("Couldn't add that lens", isPresented: Binding(get: { importError != nil }, set: { if !$0 { importError = nil } })) {
+            Button("OK") { importError = nil }
+        } message: { Text(importError ?? "") }
+    }
+
+    private func section(_ title: String, _ items: [LensInfo]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title).font(.headline)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
+                ForEach(items) { LensCard(info: $0) }
+            }
+        }
+    }
+
+    private var problemsBanner: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Label("\(library.problems.count) lens\(library.problems.count == 1 ? "" : "es") in your Lenses folder couldn't be used", systemImage: "exclamationmark.triangle.fill")
+                .font(.caption.weight(.semibold)).foregroundStyle(.orange)
+            ForEach(library.problems) { problem in
+                HStack(alignment: .firstTextBaseline) {
+                    Text("**\(problem.id):** \(problem.message)").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
+                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([problem.folder]) }
+                        .buttonStyle(.link).font(.caption)
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }
 
@@ -151,6 +223,7 @@ private struct LensCard: View {
 
     var body: some View {
         let selected = model.lensID == info.id
+        let favourite = model.lensLibrary.isFavourite(info.id)
         Button { model.selectLens(selected ? nil : info.id) } label: {
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
@@ -173,6 +246,32 @@ private struct LensCard: View {
             .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
         .buttonStyle(.plain)
+        .overlay(alignment: .topTrailing) {
+            VStack(spacing: 4) {
+                Button { model.lensLibrary.toggleFavourite(info.id) } label: {
+                    Image(systemName: favourite ? "star.fill" : "star").foregroundStyle(favourite ? Color.yellow : Color.secondary)
+                }
+                .buttonStyle(.plain)
+                .help(favourite ? "Remove from favourites" : "Add to favourites")
+                .accessibilityLabel(favourite ? "Remove from favourites" : "Add to favourites")
+                if !info.warnings.isEmpty {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange).help(info.warnings.joined(separator: "\n"))
+                }
+            }
+            .padding(8)
+            .offset(y: info.scored ? 22 : 30)
+        }
+        .contextMenu {
+            Button(favourite ? "Remove from Favourites" : "Add to Favourites") { model.lensLibrary.toggleFavourite(info.id) }
+            if info.folder != nil {
+                Divider()
+                Button("Show in Finder") { model.lensLibrary.reveal(info) }
+                Button("Move to Trash", role: .destructive) {
+                    if model.lensID == info.id { model.selectLens(nil) }
+                    model.lensLibrary.trash(info)
+                }
+            }
+        }
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
@@ -200,11 +299,18 @@ private struct LensInspector: View {
             if let info = model.selectedLens {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("\(info.glyph) \(info.name)").font(.headline)
+                    if let author = info.author { Text("by \(author)").font(.caption).foregroundStyle(.secondary) }
                     Text(info.blurb).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 LensStatusLine()
                 if info.scored {
                     Label("Best: \(model.bestScore(for: info.id))", systemImage: "trophy.fill").font(.caption).foregroundStyle(.secondary)
+                }
+                if !info.warnings.isEmpty {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Label("Parts of this lens were skipped", systemImage: "exclamationmark.triangle.fill").font(.caption.weight(.semibold)).foregroundStyle(.orange)
+                        ForEach(info.warnings, id: \.self) { Text($0).font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
+                    }
                 }
                 if model.preview.mirrored == false {
                     Text("This preview shows what other people see, so left and right are the other way round from a mirror.")

@@ -2,6 +2,11 @@ import AppKit
 import CoreMediaIO
 import CoreVideo
 import Foundation
+import os
+
+/// Written to the system log (subsystem is the extension's own bundle ID) so that "the camera isn't there" can be traced:
+/// `log show --predicate 'subsystem CONTAINS "backdrop"' --last 5m`.
+let extensionLog = Logger(subsystem: Bundle.main.bundleIdentifier ?? "app.backdrop.camera", category: "extension")
 
 // These identifiers are shared with the app (VirtualCameraSink.swift). Change both together.
 private let deviceUUID = UUID(uuidString: "5D8B2A40-7C2E-4F8E-9D3A-BA0C4D2E6F11")!
@@ -28,13 +33,20 @@ final class ProviderSource: NSObject, CMIOExtensionProviderSource {
         deviceSource = DeviceSource(localizedName: "Backdrop Camera")
         do {
             try provider.addDevice(deviceSource.device)
+            extensionLog.notice("added the Backdrop Camera device")
         } catch {
+            extensionLog.fault("failed to add the device: \(error.localizedDescription, privacy: .public)")
             fatalError("Failed to add device: \(error.localizedDescription)")
         }
     }
 
-    func connect(to client: CMIOExtensionClient) throws {}
-    func disconnect(from client: CMIOExtensionClient) {}
+    func connect(to client: CMIOExtensionClient) throws {
+        extensionLog.notice("client connected: pid \(client.pid, privacy: .public)")
+    }
+
+    func disconnect(from client: CMIOExtensionClient) {
+        extensionLog.notice("client disconnected: pid \(client.pid, privacy: .public)")
+    }
 
     var availableProperties: Set<CMIOExtensionProperty> { [.providerManufacturer] }
 
@@ -114,6 +126,7 @@ final class DeviceSource: NSObject, CMIOExtensionDeviceSource {
     func sourceDidStart() {
         queue.async {
             self.sourceClients += 1
+            extensionLog.notice("someone is watching (\(self.sourceClients, privacy: .public))")
             guard self.timer == nil else { return }
             // Keeps the picture alive when the app is off or between frames.
             let timer = DispatchSource.makeTimerSource(queue: self.queue)
@@ -127,6 +140,7 @@ final class DeviceSource: NSObject, CMIOExtensionDeviceSource {
     func sourceDidStop() {
         queue.async {
             self.sourceClients = max(0, self.sourceClients - 1)
+            extensionLog.notice("someone stopped watching (\(self.sourceClients, privacy: .public) left)")
             if self.sourceClients == 0 {
                 self.timer?.cancel()
                 self.timer = nil
@@ -169,12 +183,16 @@ final class DeviceSource: NSObject, CMIOExtensionDeviceSource {
     func sinkDidStart(client: CMIOExtensionClient) {
         queue.async {
             self.sinkRunning = true
+            extensionLog.notice("the app started sending frames (pid \(client.pid, privacy: .public))")
             self.pull(from: client)
         }
     }
 
     func sinkDidStop() {
-        queue.async { self.sinkRunning = false }
+        queue.async {
+            self.sinkRunning = false
+            extensionLog.notice("the app stopped sending frames")
+        }
     }
 
     private func pull(from client: CMIOExtensionClient) {

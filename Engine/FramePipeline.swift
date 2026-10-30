@@ -26,6 +26,11 @@ final class FramePipeline {
     private var waiting: (camera: CVPixelBuffer, time: CMTime)?
     /// Bumped by `stop()`, so a cutout that was in flight at the time is thrown away when it finishes.
     private var generation = 0
+    /// Whether the current background's source is running (it is paused when the camera goes off).
+    private var sourceRunning = false
+    /// The timestamp of the last frame sent out. Anything older that turns up later (a slow cutout finishing after a newer
+    /// frame was made without one) is thrown away rather than sent out of order.
+    private var lastSentTime: CMTime?
 
     private var background = Background.off
     private var source: BackgroundSource?
@@ -57,8 +62,18 @@ final class FramePipeline {
     /// Seconds since a finished frame was last produced. Large while the camera is delivering means processing is stuck.
     var secondsSinceOutput: TimeInterval { outputLock.withLock { CFAbsoluteTimeGetCurrent() - lastOutputAt } }
 
-    /// Call when the camera starts, so the clock begins then rather than at launch.
-    func markStarted() { outputLock.withLock { lastOutputAt = CFAbsoluteTimeGetCurrent() } }
+    /// Call when the camera starts, so the clock begins then rather than at launch. Also starts the background's source again
+    /// if turning the camera off had paused it (a video, a live window).
+    func markStarted() {
+        outputLock.withLock { lastOutputAt = CFAbsoluteTimeGetCurrent() }
+        queue.async {
+            self.lastSentTime = nil
+            if !self.sourceRunning, let source = self.source {
+                source.start()
+                self.sourceRunning = true
+            }
+        }
+    }
 
     /// Called on `queue` once a frame made after a change of background or lens has gone out and the new picture is really
     /// showing: for a background that means its source has delivered a frame, not just that the dark placeholder is up.
@@ -94,8 +109,10 @@ final class FramePipeline {
                 self.outgoing?.source.stop()
                 self.source = nil
                 self.outgoing = nil
+                self.sourceRunning = false
             } else {
                 newSource?.start()
+                self.sourceRunning = newSource != nil
                 if let old = self.source {
                     // Dissolve from whatever was showing, even if that was itself mid-dissolve.
                     self.outgoing?.source.stop()
@@ -134,7 +151,9 @@ final class FramePipeline {
             self.generation += 1
             self.cutoutBusy = false
             self.waiting = nil
+            self.lastSentTime = nil
             self.source?.stop()
+            self.sourceRunning = false
             self.outgoing?.source.stop()
             self.outgoing = nil
             self.smoother.reset()
@@ -165,6 +184,7 @@ final class FramePipeline {
     /// cutout of the next frame simply runs while this one is composited and sent on.
     func submit(_ camera: CVPixelBuffer, at time: CMTime) {
         guard needsCutout else {
+            waiting = nil                    // a frame still waiting for a cutout is older than this one and no longer needs it
             process(camera, at: time)
             return
         }
@@ -195,6 +215,7 @@ final class FramePipeline {
 
     /// Must be called on `queue`.
     func process(_ camera: CVPixelBuffer, at time: CMTime, cutout: Cutout = .compute) {
+        if let last = lastSentTime, last.isValid, time.isValid, CMTimeCompare(time, last) < 0 { return }
         let now = CACurrentMediaTime()
         defer { recordStats(started: now) }
         let dt = min(0.1, max(1.0 / 240, now - (lastFrameAt ?? now - 1.0 / 30)))
@@ -260,6 +281,7 @@ final class FramePipeline {
         guard let output = compositor.makeOutputBuffer() else { return }
         compositor.render(finished, into: output)
         onOutput?(output, time)
+        lastSentTime = time
         outputLock.withLock { lastOutputAt = CFAbsoluteTimeGetCurrent() }
 
         if let change = pendingChange {
