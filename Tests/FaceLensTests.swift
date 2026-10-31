@@ -377,6 +377,7 @@ final class LensCatalogTests: XCTestCase {
         for info in LensCatalog.all {
             let lens = info.make()
             XCTAssertEqual(lens.needs.contains(.face), info.needsFace, "\(info.name): the catalog and the lens agree on needing a face")
+            XCTAssertEqual(lens.needs.contains(.hands), info.needsHands, "\(info.name): the catalog and the lens agree on needing hands")
             XCTAssertFalse(info.blurb.isEmpty)
         }
         for category in LensInfo.Category.allCases where category != .custom { XCTAssertFalse(LensCatalog.lenses(in: category).isEmpty) }   // My Lenses is the user's

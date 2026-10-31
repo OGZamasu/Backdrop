@@ -45,6 +45,8 @@ final class FramePipeline {
     private var lastFrameAt: CFTimeInterval?
     private let faceTracker = FaceTrackingService()
     private var faceSmoother = FaceSmoother()
+    private let handTracker = HandTrackingService()
+    private var handSmoother = HandSmoother()
 
     /// Replaces the person-cutout step. For tests, which have no Vision to lean on.
     var matteOverride: ((CVPixelBuffer) -> CVPixelBuffer?)?
@@ -55,6 +57,8 @@ final class FramePipeline {
     }
     /// Replaces face tracking. For tests, which have no real face.
     var faceOverride: (() -> FaceState?)?
+    /// Replaces hand tracking. For tests, which have no real hands.
+    var handsOverride: (() -> [HandState])?
 
     private let outputLock = NSLock()
     private var lastOutputAt = CFAbsoluteTimeGetCurrent()
@@ -136,6 +140,8 @@ final class FramePipeline {
             self.lens = new
             self.faceSmoother.reset()
             self.faceTracker.reset()
+            self.handSmoother.reset()
+            self.handTracker.reset()
         }
     }
 
@@ -268,13 +274,22 @@ final class FramePipeline {
                     face = faceSmoother.update(faceTracker.latest().flatMap(FaceFeatureExtractor.measure), dt: dt)
                 }
             }
+            var hands: [HandState] = []
+            if lens.needs.contains(.hands) {
+                if let handsOverride {
+                    hands = handsOverride()
+                } else {
+                    handTracker.submit(camera, transform: Compositor.fillTransform(cameraImage.extent, into: compositor.rect))
+                    hands = handSmoother.update(handTracker.latest(), dt: dt)
+                }
+            }
             var grid: MatteGrid?
             if lens.wantsMatteGrid, let matte {
                 matteGrid.update(from: matte, rect: compositor.rect, context: compositor.context)
                 grid = matteGrid
             }
             let input = LensInput(time: now, dt: dt, rect: compositor.rect, camera: fitted, matte: matte, background: backdrop,
-                                  composed: composed, matteGrid: grid, face: face, services: lensServices)
+                                  composed: composed, matteGrid: grid, face: face, services: lensServices, hands: hands)
             finished = lens.render(input).cropped(to: compositor.rect)
         }
 

@@ -46,7 +46,7 @@ struct MenuBarView: View {
                 BackgroundPicker(contentWidth: Self.width - Self.padding * 2)
             }
 
-            LensPicker()
+            LensPicker(width: Self.width - Self.padding * 2)
 
             VirtualCameraStatus()
 

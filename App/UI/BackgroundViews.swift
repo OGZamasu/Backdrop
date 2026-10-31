@@ -48,12 +48,8 @@ struct BackgroundThumbnail: View {
             case .passthrough:
                 Color(white: 0.16)
                 Image(systemName: "video").font(.title2).foregroundStyle(.secondary)
-            case .blur:
-                LinearGradient(colors: [.gray.opacity(0.5), .gray.opacity(0.25)], startPoint: .topLeading, endPoint: .bottomTrailing)
-                Image(systemName: "circle.lefthalf.filled").font(.title2).foregroundStyle(.white.opacity(0.85))
-            case .gradient(let preset):
-                let c = preset.colors
-                LinearGradient(colors: [rgb(c[0]), rgb(c[1]), rgb(c[2])], startPoint: .bottomLeading, endPoint: .topTrailing)
+            case .blur, .gradient, .solid, .treated, .procedural:
+                BuiltInThumbnail(background: background)
             case .pipes:
                 PipesThumbnail()
             case .maze:
@@ -79,11 +75,58 @@ struct BackgroundThumbnail: View {
         }
     }
 
-    private func rgb(_ c: [Double]) -> Color { Color(red: c[0], green: c[1], blue: c[2]) }
-
     private func appIcon(_ bundleID: String) -> NSImage? {
         NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID).map { NSWorkspace.shared.icon(forFile: $0.path) }
     }
+}
+
+/// Pictures of the built-in backdrops, made once by running the real source (on a made-up room, for the camera looks)
+/// and kept for the session.
+@MainActor
+final class BackdropSceneThumbnails {
+    static let shared = BackdropSceneThumbnails()
+    private var cache: [BackgroundKind: NSImage] = [:]
+
+    func image(for background: Background) async -> NSImage? {
+        if let cached = cache[background.kind] { return cached }
+        let image = await Self.render(background)
+        if let image { cache[background.kind] = image }
+        return image
+    }
+
+    private nonisolated static func render(_ background: Background) async -> NSImage? {
+        BackdropThumbnail.render(background).map { NSImage(cgImage: $0, size: NSSize(width: $0.width, height: $0.height)) }
+    }
+}
+
+/// A built-in's real picture, with a quiet stand-in in its own colours while it is made.
+private struct BuiltInThumbnail: View {
+    let background: Background
+    @State private var image: NSImage?
+
+    var body: some View {
+        ZStack {
+            placeholder
+            if let image { Image(nsImage: image).resizable().aspectRatio(contentMode: .fill).transition(.opacity) }
+        }
+        .animation(.easeOut(duration: 0.2), value: image != nil)
+        .task(id: background.kind) { image = await BackdropSceneThumbnails.shared.image(for: background) }
+    }
+
+    @ViewBuilder private var placeholder: some View {
+        switch background.kind {
+        case .gradient(let preset):
+            let c = preset.colors
+            LinearGradient(colors: [rgb(c[0]), rgb(c[1]), rgb(c[2])], startPoint: .bottomLeading, endPoint: .topTrailing)
+        case .solid(let hex, _):
+            let c = BackdropPaint.rgb(hex: hex) ?? (r: 0.5, g: 0.5, b: 0.5)
+            Color(red: c.r, green: c.g, blue: c.b)
+        default:
+            Color(white: 0.12)
+        }
+    }
+
+    private func rgb(_ c: [Double]) -> Color { Color(red: c[0], green: c[1], blue: c[2]) }
 }
 
 /// A few shiny pipes and ball joints on black, drawn rather than rendered, so the grid stays cheap.
@@ -195,6 +238,7 @@ struct BackgroundTile: View {
             case .video: return "play.fill"
             case .window, .display: return "dot.radiowaves.left.and.right"
             case .gradient: return "sparkle"
+            case .procedural(let style): return style.isAnimated ? "sparkle" : nil
             default: return background.origin == .generated ? "wand.and.stars" : nil
             }
         }()

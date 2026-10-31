@@ -9,6 +9,8 @@ struct LensNeeds: OptionSet {
     static let matte = LensNeeds(rawValue: 1 << 0)
     /// Where the face is and what it is doing: eyes, mouth, eyebrows.
     static let face = LensNeeds(rawValue: 1 << 1)
+    /// Where the hands are and what they are doing: which fingers are out, where the fingertips point.
+    static let hands = LensNeeds(rawValue: 1 << 2)
 }
 
 /// One line for the interface: a score, a hint, a countdown.
@@ -43,6 +45,8 @@ struct LensInput {
     let matteGrid: MatteGrid?
     let face: FaceState?
     let services: LensServices
+    /// The hands in view, up to two, when the lens asked for them. Empty when none are found.
+    var hands: [HandState] = []
 }
 
 /// A live effect or game that goes on top of the picture, like a Snapchat lens.

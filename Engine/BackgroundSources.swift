@@ -41,6 +41,12 @@ enum BackgroundSourceFactory {
             return WindowCaptureSource(target: .window(bundleID: bundleID, title: title))
         case .display:
             return WindowCaptureSource(target: .display)
+        case .solid(let hex, let lit):
+            return SolidBackdropSource(hex: hex, lit: lit)
+        case .treated(let treatment):
+            return CameraTreatmentSource(treatment)
+        case .procedural(let style):
+            return ProceduralBackdrop.makeSource(for: style)
         }
     }
 }
@@ -71,48 +77,75 @@ final class ImageSource: BackgroundSource {
 
 // MARK: - Blur
 
-/// The classic: your own room, out of focus.
+/// The classic: your own room, out of focus, the way a fast lens would see it rather than a plain smear.
+///
+/// - Depth: the top of the picture (the far wall, the ceiling) goes softer than the bottom (the desk and chair near you).
+/// - Bokeh: bright spots (lamps, windows) bloom into soft discs instead of fading to grey.
+/// - It is worked out on a small copy (a quarter or half the size) and enlarged smoothly, which a blur this wide hides,
+///   so even the heaviest costs well under a millisecond.
 final class BlurSource: BackgroundSource {
     private let radius: Double
     init(radius: Double) { self.radius = radius }
 
     func frame(at time: CFTimeInterval, camera: CIImage) -> CIImage? {
-        camera.clampedToExtent().applyingGaussianBlur(sigma: radius).cropped(to: camera.extent)
+        let extent = camera.extent
+        guard extent.width > 1, extent.height > 1, extent.width.isFinite, extent.height.isFinite else { return nil }
+        return BackdropLens.blurred(camera, sigma: radius, bokeh: 0.55).map { BackdropFinish.finish($0) }
     }
 }
 
-// MARK: - Animated gradient
+/// A lens's out-of-focus look for the camera picture, shared by the blurs and the camera looks.
+enum BackdropLens {
+    /// `image` out of focus by about `sigma` pixels: softer toward the top (further away), with bright spots spread into
+    /// discs and laid back on as light (`bokeh` 0 for none, 1 for strong). Nil for an empty picture.
+    static func blurred(_ image: CIImage, sigma: Double, bokeh: Double) -> CIImage? {
+        let extent = image.extent
+        guard extent.width > 1, extent.height > 1, extent.width.isFinite, extent.height.isFinite else { return nil }
+        let shrink: CGFloat = sigma <= 8 ? 0.5 : 0.25
+        let toSmall = CGAffineTransform(translationX: -extent.minX, y: -extent.minY).concatenating(CGAffineTransform(scaleX: shrink, y: shrink))
+        let small = image.transformed(by: toSmall)
+        let box = small.extent
+        let s = sigma * Double(shrink)
 
-/// A slow-drifting colour wash. Procedural, so it's free of files and never repeats.
-final class GradientSource: BackgroundSource {
-    private let preset: GradientPreset
-    private let size = CGSize(width: 1280, height: 720)
+        // Where it is far (the top) the blur is full; toward the bottom it eases to about two thirds.
+        let depth = CIFilter.linearGradient()
+        depth.point0 = CGPoint(x: 0, y: box.height * 0.08)
+        depth.point1 = CGPoint(x: 0, y: box.height * 0.62)
+        depth.color0 = CIColor(red: 0.62, green: 0.62, blue: 0.62)
+        depth.color1 = CIColor(red: 1, green: 1, blue: 1)
+        let variable = CIFilter.maskedVariableBlur()
+        variable.inputImage = small.clampedToExtent()
+        variable.mask = depth.outputImage?.cropped(to: box)
+        variable.radius = Float(s)
+        var soft = (variable.outputImage ?? small.clampedToExtent().applyingGaussianBlur(sigma: s)).cropped(to: box)
 
-    init(preset: GradientPreset) { self.preset = preset }
-
-    func frame(at time: CFTimeInterval, camera: CIImage) -> CIImage? {
-        let colors = preset.colors.map { CIColor(red: $0[0], green: $0[1], blue: $0[2]) }
-        let rect = CGRect(origin: .zero, size: size)
-
-        let ramp = CIFilter.linearGradient()
-        ramp.point0 = CGPoint(x: size.width * (0.5 + 0.45 * cos(time * 0.11)), y: size.height * (0.5 + 0.45 * sin(time * 0.13)))
-        ramp.point1 = CGPoint(x: size.width - ramp.point0.x, y: size.height - ramp.point0.y)
-        ramp.color0 = colors[0]
-        ramp.color1 = colors[1]
-        guard var image = ramp.outputImage?.cropped(to: rect) else { return nil }
-
-        for i in 0..<2 {
-            let phase = time * (0.07 + 0.04 * Double(i)) + Double(i) * 2.1
-            let glow = CIFilter.radialGradient()
-            glow.center = CGPoint(x: size.width * (0.5 + 0.40 * cos(phase)), y: size.height * (0.5 + 0.35 * sin(phase * 1.3)))
-            glow.radius0 = 0
-            glow.radius1 = Float(size.height * 0.75)
-            let tint = colors[2 + i]
-            glow.color0 = CIColor(red: tint.red, green: tint.green, blue: tint.blue, alpha: 0.55)
-            glow.color1 = CIColor(red: tint.red, green: tint.green, blue: tint.blue, alpha: 0)
-            if let layer = glow.outputImage?.cropped(to: rect) { image = layer.composited(over: image) }
+        if bokeh > 0 {
+            // Only what is close to white, spread with a disc (a lens's aperture), then laid back on as light.
+            let hot = small.applyingFilter("CIColorMatrix", parameters: [
+                "inputRVector": CIVector(x: 1.6, y: 0, z: 0, w: 0), "inputGVector": CIVector(x: 0, y: 1.6, z: 0, w: 0),
+                "inputBVector": CIVector(x: 0, y: 0, z: 1.6, w: 0), "inputBiasVector": CIVector(x: -1.05, y: -1.05, z: -1.05, w: 0),
+            ]).applyingFilter("CIColorClamp", parameters: ["inputMinComponents": CIVector(x: 0, y: 0, z: 0, w: 1),
+                                                           "inputMaxComponents": CIVector(x: 1, y: 1, z: 1, w: 1)])
+            let disc = CIFilter.discBlur()
+            disc.inputImage = hot.clampedToExtent()
+            disc.radius = Float(max(1, s * 1.15))
+            let spread = (disc.outputImage ?? hot).cropped(to: box).clampedToExtent().applyingGaussianBlur(sigma: max(0.6, s * 0.12)).cropped(to: box)
+            soft = spread.applyingFilter("CIColorMatrix", parameters: [
+                "inputRVector": CIVector(x: bokeh, y: 0, z: 0, w: 0), "inputGVector": CIVector(x: 0, y: bokeh, z: 0, w: 0),
+                "inputBVector": CIVector(x: 0, y: 0, z: bokeh, w: 0), "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 0),
+                "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 1),
+            ]).applyingFilter("CIScreenBlendMode", parameters: [kCIInputBackgroundImageKey: soft]).cropped(to: box)
         }
-        return image
+
+        // Back to full size, smoothly, and onto the picture's own place.
+        let enlarge = CIFilter.bicubicScaleTransform()
+        enlarge.inputImage = soft.clampedToExtent()
+        enlarge.scale = Float(1 / shrink)
+        enlarge.aspectRatio = 1
+        enlarge.parameterB = 1
+        enlarge.parameterC = 0
+        guard let big = enlarge.outputImage else { return nil }
+        return big.transformed(by: CGAffineTransform(translationX: extent.minX, y: extent.minY)).cropped(to: extent)
     }
 }
 

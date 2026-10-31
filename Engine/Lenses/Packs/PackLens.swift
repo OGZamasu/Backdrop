@@ -270,9 +270,12 @@ final class PackLens: Lens {
             path.addCurve(to: CGPoint(x: 0, y: -h / 2), control1: CGPoint(x: w / 2, y: -h * 0.05), control2: CGPoint(x: w * 0.3, y: -h * 0.3))
             path.closeSubpath()
         }
-        ctx.addPath(path)
-        ctx.setFillColor(fill)
-        ctx.fillPath()
+        // A see-through fill (an outline-only shape) is skipped: filling a full-screen shape with nothing still costs milliseconds.
+        if fill.alpha > 0.002 {
+            ctx.addPath(path)
+            ctx.setFillColor(fill)
+            ctx.fillPath()
+        }
         if let stroke {
             ctx.addPath(path)
             ctx.setStrokeColor(stroke)

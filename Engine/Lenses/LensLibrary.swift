@@ -5,7 +5,7 @@ import SwiftUI
 @MainActor
 final class LensLibrary: ObservableObject {
     private enum Keys {
-        static let samples = "lensSamplesInstalled", favourites = "favouriteLenses"
+        static let samples = "lensSamplesInstalled", given = "lensSamplesGiven", favourites = "favouriteLenses"
     }
 
     let directory: URL
@@ -23,11 +23,16 @@ final class LensLibrary: ObservableObject {
         self.defaults = defaults
         trasher = trash
         favourites = Set(defaults.stringArray(forKey: Keys.favourites) ?? [])
-        // The first time, put the examples there to open, copy and change. After that the folder is the user's.
-        if !defaults.bool(forKey: Keys.samples) {
-            try? SampleLenses.install(into: directory)
-            defaults.set(true, forKey: Keys.samples)
+        // Put the examples there to open, copy and change. Each is given once: a later version's new examples arrive, and
+        // one the user has deleted does not come back. After that the folder is the user's.
+        var given = Set(defaults.stringArray(forKey: Keys.given) ?? [])
+        if given.isEmpty && defaults.bool(forKey: Keys.samples) { given = Set(SampleLenses.originalFolders) }
+        let fresh = SampleLenses.all.filter { !given.contains($0.folder) }
+        if !fresh.isEmpty {
+            try? SampleLenses.install(fresh, into: directory)
+            defaults.set(Array(given.union(fresh.map(\.folder))).sorted(), forKey: Keys.given)
         }
+        defaults.set(true, forKey: Keys.samples)
         reload()
     }
 

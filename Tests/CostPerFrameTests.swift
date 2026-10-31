@@ -200,7 +200,18 @@ final class CostPerFrameTests: XCTestCase {
             ("3D maze, balanced", { $0.setBackground(.maze, source: MazeSource()) }),
             ("soft blur, balanced, Aura", { p in self.softBlur(p); p.setLens(LensCatalog.info(for: "aura")!.make()) }),
             ("soft blur, balanced, Breakout", { p in self.softBlur(p); p.setLens(LensCatalog.info(for: "breakout")!.make()) }),
-            ("soft blur, balanced, Cat Ears", { p in self.softBlur(p); p.setLens(LensCatalog.info(for: "cat")!.make()) }),
+            ("soft blur, balanced, Cat Ears", { p in self.softBlur(p); p.setLens(LensCatalog.info(for: "dress-cat")!.make()) }),
+            // Hand tracking is a second Vision request running beside the cutout; the synthetic camera has no hand in it, which costs the same.
+            ("soft blur, balanced, Fruit Slash", { p in self.softBlur(p); p.setLens(LensCatalog.info(for: "fruit-slash")!.make()) }),
+            ("soft blur, balanced, Finger Guns", { p in self.softBlur(p); p.setLens(LensCatalog.info(for: "finger-guns")!.make()) }),
+            ("soft blur, balanced, Safari", { p in self.softBlur(p); p.setLens(LensCatalog.info(for: "scene-safari")!.make()) }),
+            ("soft blur, balanced, Pirate Cove", { p in self.softBlur(p); p.setLens(LensCatalog.info(for: "scene-pirate-cove")!.make()) }),
+            ("soft blur, balanced, Wizard", { p in self.softBlur(p); p.setLens(LensCatalog.info(for: "dress-wizard")!.make()) }),
+            ("soft blur, balanced, Fire Hands", { p in self.softBlur(p); p.setLens(LensCatalog.info(for: "fire-hands")!.make()) }),
+            ("soft blur, balanced, Meteor Dodge", { p in self.softBlur(p); p.setLens(LensCatalog.info(for: "meteor-dodge")!.make()) }),
+            ("soft blur, balanced, Disco", { p in self.softBlur(p); p.setLens(LensCatalog.info(for: "disco")!.make()) }),
+            ("soft blur, balanced, Watercolour", { p in self.softBlur(p); p.setLens(LensCatalog.info(for: "watercolour")!.make()) }),
+            ("soft blur, balanced, Mind Blown", { p in self.softBlur(p); p.setLens(LensCatalog.info(for: "mind-blown")!.make()) }),
         ]
         let only = ProcessInfo.processInfo.environment["BACKDROP_COST_ONLY"]
         for (name, configure) in cases where only == nil || name.contains(only!) {

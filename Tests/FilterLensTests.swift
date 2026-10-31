@@ -38,15 +38,18 @@ final class LensHarness {
         services = LensServices(context: compositor.context, size: SyntheticScene.size)
     }
 
-    func input(_ scene: SyntheticScene = SyntheticScene(), time: Double = 0, dt: Double = 1.0 / 30, background: Bool = true, wantsGrid: Bool = true) -> LensInput {
-        scene.input(time: time, dt: dt, services: services, compositor: compositor, grid: wantsGrid ? grid : nil,
-                    background: background ? SyntheticScene.backdrop() : nil)
+    func input(_ scene: SyntheticScene = SyntheticScene(), time: Double = 0, dt: Double = 1.0 / 30, background: Bool = true, wantsGrid: Bool = true,
+               hands: [HandState] = []) -> LensInput {
+        var made = scene.input(time: time, dt: dt, services: services, compositor: compositor, grid: wantsGrid ? grid : nil,
+                               background: background ? SyntheticScene.backdrop() : nil)
+        made.hands = hands
+        return made
     }
 
     /// The same frame at another moment, without redrawing the scene.
-    func at(_ base: LensInput, time: Double, dt: Double = 1.0 / 30) -> LensInput {
+    func at(_ base: LensInput, time: Double, dt: Double = 1.0 / 30, hands: [HandState]? = nil) -> LensInput {
         LensInput(time: time, dt: dt, rect: base.rect, camera: base.camera, matte: base.matte, background: base.background,
-                  composed: base.composed, matteGrid: base.matteGrid, face: base.face, services: base.services)
+                  composed: base.composed, matteGrid: base.matteGrid, face: base.face, services: base.services, hands: hands ?? base.hands)
     }
 
     func average(_ image: CIImage, _ rect: CGRect) -> (r: Double, g: Double, b: Double) {

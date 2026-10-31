@@ -38,19 +38,9 @@ struct StudioView: View {
     }
 
     private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 2) {
             ForEach(Pane.allCases) { item in
-                let selected = item == model.studioPane
-                Button { model.studioPane = item } label: {
-                    Label(item.rawValue, systemImage: item.symbol)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 7)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .background(selected ? Color.accentColor.opacity(0.18) : .clear, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-                .accessibilityAddTraits(selected ? .isSelected : [])
+                SidebarItem(pane: item, selected: item == model.studioPane) { model.studioPane = item }
             }
             Spacer()
         }
@@ -58,6 +48,31 @@ struct StudioView: View {
         .frame(width: 190)
         .frame(maxHeight: .infinity)
         .background(Color(nsColor: .controlBackgroundColor))
+    }
+}
+
+/// One pane in the Studio's sidebar, with a hover state and the selected one tinted.
+private struct SidebarItem: View {
+    let pane: StudioView.Pane
+    let selected: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Label(pane.rawValue, systemImage: pane.symbol)
+                .font(.system(size: 13, weight: selected ? .semibold : .regular))
+                .foregroundStyle(selected ? Color.accentColor : Color.primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(selected ? Color.accentColor.opacity(0.16) : Color.primary.opacity(hovering ? 0.06 : 0),
+                    in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .onHover { hovering = $0 }
+        .accessibilityAddTraits(selected ? [.isSelected, .isButton] : .isButton)
     }
 }
 
@@ -203,6 +218,9 @@ private struct Inspector: View {
         case .passthrough: return "Your camera, untouched."
         case .blur: return "Your room, out of focus."
         case .gradient: return "A slowly shifting colour wash."
+        case .solid: return "A plain studio colour."
+        case .treated(let treatment): return treatment.blurb
+        case .procedural(let style): return style.blurb
         case .pipes: return "The old Windows screensaver, growing behind you."
         case .maze: return "The old Windows maze screensaver: a walk through brick corridors."
         case .image: return background.origin == .generated ? "Generated on this Mac." : "A still image."
