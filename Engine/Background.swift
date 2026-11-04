@@ -246,9 +246,14 @@ enum BackgroundKind: Codable, Hashable {
     case maze
     case image(file: String)
     case video(file: String)
-    /// A live window, matched by app (and optionally title) each time the background activates.
-    case window(bundleID: String, title: String?)
+    /// A live window, matched by app (and optionally title) each time the background activates. `windowID` picks out the very
+    /// window chosen while it stays open; windows get new ids when their app relaunches, so the app and title are the fallback.
+    /// Saves from before it existed have no `windowID` and decode with nil.
+    case window(bundleID: String, title: String?, windowID: UInt32? = nil)
+    /// The main screen.
     case display
+    /// One particular screen, when there are several.
+    case screen(displayID: UInt32)
     /// One flat colour, `hex` being "RRGGBB". `lit` adds the faint falloff of a softly lit wall, so it looks like a
     /// room rather than a swatch; leave it off for a colour that has to be exactly the same everywhere (chroma key).
     case solid(hex: String, lit: Bool)
@@ -272,9 +277,17 @@ struct Background: Identifiable, Codable, Hashable {
     var createdAt = Date()
 
     /// Whether the background changes over time and so needs a steady frame clock.
+    /// Whether this shares a window or a screen: what Present arranges, and what the "Sharing" indicators are about.
+    var isScreenShare: Bool {
+        switch kind {
+        case .window, .display, .screen: return true
+        default: return false
+        }
+    }
+
     var isLive: Bool {
         switch kind {
-        case .video, .window, .display, .gradient, .pipes, .maze: return true
+        case .video, .window, .display, .screen, .gradient, .pipes, .maze: return true
         case .procedural(let style): return style.isAnimated
         default: return false
         }

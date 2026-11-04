@@ -76,17 +76,24 @@ final class BackgroundLibrary: ObservableObject {
         return item
     }
 
+    /// Adds a live window, or picks the one already in the library for that same window, so choosing it again does not pile up copies.
     @discardableResult
-    func addWindow(bundleID: String, appName: String, title: String?) -> Background {
+    func addWindow(bundleID: String, appName: String, title: String?, windowID: UInt32? = nil) -> Background {
         let name = [appName, title].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " – ")
-        let item = Background(id: UUID(), name: name, kind: .window(bundleID: bundleID, title: title), origin: .imported)
+        let kind = BackgroundKind.window(bundleID: bundleID, title: title, windowID: windowID)
+        if let existing = userItems.first(where: { $0.kind == kind }) { return existing }
+        let item = Background(id: UUID(), name: name, kind: kind, origin: .imported)
         append(item)
         return item
     }
 
+    /// Adds a screen: the main one, or with `displayID` a particular one when there are several. A screen already in the library
+    /// is picked again rather than added twice.
     @discardableResult
-    func addDisplay() -> Background {
-        let item = Background(id: UUID(), name: "Screen", kind: .display, origin: .imported)
+    func addDisplay(displayID: UInt32? = nil, name: String? = nil) -> Background {
+        let kind: BackgroundKind = displayID.map { .screen(displayID: $0) } ?? .display
+        if displayID != nil, let existing = userItems.first(where: { $0.kind == kind }) { return existing }
+        let item = Background(id: UUID(), name: name ?? "Screen", kind: kind, origin: .imported)
         append(item)
         return item
     }

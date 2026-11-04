@@ -21,7 +21,7 @@ extension BackgroundSource {
 
 enum BackgroundSourceFactory {
     @MainActor
-    static func make(for background: Background, library: BackgroundLibrary) -> BackgroundSource? {
+    static func make(for background: Background, library: BackgroundLibrary, capture: CaptureOptions = CaptureOptions()) -> BackgroundSource? {
         switch background.kind {
         case .passthrough:
             return nil
@@ -37,10 +37,12 @@ enum BackgroundSourceFactory {
             return library.fileURL(for: background).map(ImageSource.init)
         case .video:
             return library.fileURL(for: background).map(VideoLoopSource.init)
-        case .window(let bundleID, let title):
-            return WindowCaptureSource(target: .window(bundleID: bundleID, title: title))
+        case .window(let bundleID, let title, let windowID):
+            return WindowCaptureSource(target: .window(bundleID: bundleID, title: title, windowID: windowID), options: capture)
         case .display:
-            return WindowCaptureSource(target: .display)
+            return WindowCaptureSource(target: .display(nil), options: capture)
+        case .screen(let displayID):
+            return WindowCaptureSource(target: .display(displayID), options: capture)
         case .solid(let hex, let lit):
             return SolidBackdropSource(hex: hex, lit: lit)
         case .treated(let treatment):

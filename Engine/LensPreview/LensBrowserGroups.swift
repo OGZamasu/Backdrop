@@ -14,7 +14,7 @@ enum LensBrowserGroups {
     static func order(for category: LensInfo.Category) -> [String] {
         switch category {
         case .filters: return ["Looks", "Weather & Light", "Hands", more]
-        case .faces: return ["Costumes", "Expressions", "Funhouse", more]
+        case .faces: return ["Costumes", "Expressions", "Funhouse", "Anime", more]
         case .games: return ["Hands", "Face", "Body", "Classic", more]
         case .scenes: return ["Wildlife", "Fantasy", "After Dark", more]
         case .custom: return ["Face", "Screen", more]
@@ -30,6 +30,7 @@ enum LensBrowserGroups {
         case (.faces, "Costumes"): return "theatermasks"
         case (.faces, "Expressions"): return "face.smiling"
         case (.faces, "Funhouse"): return "eyes"
+        case (.faces, "Anime"): return "bolt.fill"
         case (_, "Face"): return "face.smiling"
         case (.games, "Body"): return "figure.wave"
         case (.games, "Classic"): return "gamecontroller"
@@ -75,6 +76,7 @@ enum LensBrowserGroups {
         "big-eyes": "Funhouse", "chipmunk": "Funhouse", "big-mouth": "Funhouse", "swirl-face": "Funhouse", "squeeze-face": "Funhouse",
         "googly-eyes": "Funhouse", "pinocchio": "Funhouse", "balloon-head": "Funhouse", "tiny-head": "Funhouse", "long-face": "Funhouse",
         "mirror-face": "Funhouse", "melting-face": "Funhouse", "glitch-face": "Funhouse",
+        "dragon-ball": "Anime",
         // Games
         "fruit-slash": "Hands", "finger-guns": "Hands", "whack-a-mole": "Hands", "rock-paper-scissors": "Hands", "magic-duel": "Hands",
         "beat-pads": "Hands", "palm-star-catcher": "Hands", "hand-simon": "Hands", "palm-juggle": "Hands",

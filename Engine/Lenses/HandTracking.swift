@@ -11,9 +11,10 @@ final class HandTrackingService {
     private let queue = DispatchQueue(label: "app.backdrop.hands", qos: .userInitiated)
     private let lock = NSLock()
     private var busy = false
-    private var lastSubmit = 0.0
     /// At most this often (30 a second). A swung hand moves a long way between looks, which the games allow for.
-    static let minInterval = 0.033
+    static let minInterval = HandLookPacer.busyInterval
+    /// Drops to 8 looks a second after a couple of seconds with no hand, and back to 30 as soon as one is found.
+    private var pacer = HandLookPacer(now: CACurrentMediaTime())
     private var found: HandSample?
     // For the log: how often it looks, how often it finds a hand, and how long a look takes.
     private var looks = 0, hits = 0, slowest = 0.0, lastReport = CACurrentMediaTime()
@@ -21,10 +22,8 @@ final class HandTrackingService {
     /// Starts looking at `buffer` unless the last look is still going. `transform` takes camera pixels to output pixels.
     func submit(_ buffer: CVPixelBuffer, transform: CGAffineTransform) {
         let go = lock.withLock { () -> Bool in
-            let now = CACurrentMediaTime()
-            if busy || now - lastSubmit < Self.minInterval { return false }
+            if busy || !pacer.shouldLook(at: CACurrentMediaTime()) { return false }
             busy = true
-            lastSubmit = now
             return true
         }
         guard go else { return }
@@ -35,6 +34,7 @@ final class HandTrackingService {
             let now = CACurrentMediaTime()
             let report = self.lock.withLock { () -> (Int, Int, Double)? in
                 self.found = HandSample(hands: hands, at: now)
+                self.pacer.found(!hands.isEmpty, at: now)
                 self.busy = false
                 self.looks += 1
                 if !hands.isEmpty { self.hits += 1 }
@@ -57,7 +57,15 @@ final class HandTrackingService {
         }
     }
 
-    func reset() { lock.withLock { found = nil } }
+    func reset() {
+        lock.withLock {
+            found = nil
+            pacer.reset(now: CACurrentMediaTime())
+        }
+    }
+
+    /// Whether it is looking at the idle rate because no hand has been seen for a while.
+    var isIdle: Bool { lock.withLock { pacer.isIdle(at: CACurrentMediaTime()) } }
 
     /// Finds up to two hands. Points come back in output pixels (`transform` applied), the way every other lens signal does.
     static func detect(in handler: VNImageRequestHandler, size: CGSize, transform: CGAffineTransform) -> [RawHand] {

@@ -60,10 +60,10 @@ struct BackgroundThumbnail: View {
                 } else {
                     Color(white: 0.2)
                 }
-            case .window(let bundleID, _):
+            case .window(let bundleID, _, _):
                 Color(white: 0.16)
                 if let icon = appIcon(bundleID) { Image(nsImage: icon).resizable().frame(width: 30, height: 30) }
-            case .display:
+            case .display, .screen:
                 Color(white: 0.16)
                 Image(systemName: "display").font(.title2).foregroundStyle(.secondary)
             }
@@ -236,7 +236,7 @@ struct BackgroundTile: View {
         let symbol: String? = {
             switch background.kind {
             case .video: return "play.fill"
-            case .window, .display: return "dot.radiowaves.left.and.right"
+            case .window, .display, .screen: return "dot.radiowaves.left.and.right"
             case .gradient: return "sparkle"
             case .procedural(let style): return style.isAnimated ? "sparkle" : nil
             default: return background.origin == .generated ? "wand.and.stars" : nil

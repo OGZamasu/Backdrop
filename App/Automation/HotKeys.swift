@@ -24,6 +24,13 @@ final class HotKeyCenter {
         if let eventHandler { RemoveEventHandler(eventHandler) }
     }
 
+    /// Gives every combination back, so the shortcuts can be switched off and the keys go to other apps again.
+    func unregisterAll() {
+        references.forEach { UnregisterEventHotKey($0) }
+        references.removeAll()
+        handlers.removeAll()
+    }
+
     /// Returns false if another app already owns the combination.
     @discardableResult
     func register(keyCode: Int, modifiers: Int, handler: @escaping () -> Void) -> Bool {

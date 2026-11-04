@@ -10,6 +10,16 @@ struct WindowChoice: Identifiable, Hashable {
     let bundleID: String
     let appName: String
     let title: String
+    /// The window's size in points, for its thumbnail's shape.
+    var size: CGSize = CGSize(width: 16, height: 10)
+}
+
+/// A screen that can be shared.
+struct DisplayChoice: Identifiable, Hashable {
+    let id: CGDirectDisplayID
+    let name: String
+    let size: CGSize
+    let isMain: Bool
 }
 
 @MainActor
@@ -51,6 +61,16 @@ final class AppModel: ObservableObject {
     /// A problem worth showing the user, such as a denied permission.
     @Published var message: String?
     @Published private(set) var launchAtLogin: Bool
+    /// The small label near the bottom of the screen when a shortcut changes the background or lens.
+    @Published var showsOnScreenMessages: Bool {
+        didSet { defaults.set(showsOnScreenMessages, forKey: Keys.hud) }
+    }
+    /// The global keyboard shortcuts. Off gives the keys back to other apps.
+    @Published var shortcutsEnabled: Bool {
+        didSet { defaults.set(shortcutsEnabled, forKey: Keys.shortcuts); applyShortcuts() }
+    }
+    /// Some shortcut could not be registered because another app already owns it.
+    @Published private(set) var shortcutsTaken = false
     /// Whether frames are actually reaching the Backdrop Camera extension.
     @Published private(set) var sinkConnected = false
     /// macOS's own Background or Portrait effect is switched on for Backdrop's camera input. It would fight with the
@@ -68,7 +88,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var lensStatus: LensStatus?
 
     /// Lets the menu bar popover open the Studio on a particular pane, or straight into an action.
-    enum StudioRequest { case importFile, liveWindow, generate }
+    enum StudioRequest { case importFile, liveWindow, generate, share }
     @Published var studioPane: StudioView.Pane = .backgrounds
     @Published var studioRequest: StudioRequest?
 
@@ -85,9 +105,36 @@ final class AppModel: ObservableObject {
     @Published var lightWrap: Double { didSet { defaults.set(lightWrap, forKey: Keys.wrap); pushLook() } }
     @Published var colorMatch: Double { didSet { defaults.set(colorMatch, forKey: Keys.match); pushLook() } }
 
+    // MARK: Present
+
+    /// How a shared screen or window is arranged right now. Sliders, presets, the mouse on the preview and your hands all change this
+    /// one layout; while something moves by hand or mouse the pipeline reports it back here about ten times a second.
+    @Published private(set) var stage: StageLayout
+    private var stageMemory: StageMemory
+    private var stageSave: Task<Void, Never>?
+    /// Whether the pointer shows in a shared screen or window.
+    @Published var captureShowsCursor: Bool {
+        didSet { defaults.set(captureShowsCursor, forKey: Keys.cursor); pushCaptureOptions() }
+    }
+    /// Frames a second for sharing: 30 or 60.
+    @Published var captureFrameRate: Int {
+        didSet { defaults.set(captureFrameRate, forKey: Keys.frameRate); pushCaptureOptions() }
+    }
+    /// Sharing paused: viewers see a calm "Paused" card instead of the screen. Not remembered across launches.
+    @Published private(set) var sharePaused = false
+    /// What the pipeline says about Present: hands in view, whether the share is live.
+    @Published private(set) var stageReport: StageReport?
+    /// Whether macOS lets Backdrop record the screen. Read without asking, so looking never shows a prompt.
+    @Published private(set) var screenRecordingAllowed = CGPreflightScreenCaptureAccess()
+    private weak var captureSource: WindowCaptureSource?
+    /// The last background that was not a shared screen, for "Stop Sharing".
+    private var lastNonShareID: UUID?
+
     private enum Keys {
         static let camera = "cameraID", quality = "quality", edge = "edgeSoftness"
         static let wrap = "lightWrap", match = "colorMatch", selected = "selectedBackground"
+        static let hud = "showOnScreenMessages", shortcuts = "keyboardShortcuts"
+        static let stage = "presentStage", cursor = "captureShowsCursor", frameRate = "captureFrameRate", lastNonShare = "lastNonShareBackground"
     }
 
     var selectedBackground: Background { library.background(withID: selectedID) ?? .off }
@@ -106,7 +153,15 @@ final class AppModel: ObservableObject {
         lightWrap = defaults.object(forKey: Keys.wrap) as? Double ?? CompositeParameters().lightWrap
         colorMatch = defaults.object(forKey: Keys.match) as? Double ?? CompositeParameters().colorMatch
         launchAtLogin = SMAppService.mainApp.status == .enabled
+        showsOnScreenMessages = defaults.object(forKey: Keys.hud) as? Bool ?? true
+        shortcutsEnabled = defaults.object(forKey: Keys.shortcuts) as? Bool ?? true
         cameras = CameraCapture.availableDevices()
+        let memory = defaults.data(forKey: Keys.stage).flatMap { try? JSONDecoder().decode(StageMemory.self, from: $0) } ?? StageMemory()
+        stageMemory = memory
+        stage = memory.current
+        captureShowsCursor = defaults.object(forKey: Keys.cursor) as? Bool ?? true
+        captureFrameRate = defaults.object(forKey: Keys.frameRate) as? Int == 60 ? 60 : 30
+        lastNonShareID = defaults.string(forKey: Keys.lastNonShare).flatMap(UUID.init(uuidString:))
 
         // Views watch the model, so changes in the library and rules need to reach it.
         library.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &forwarding)
@@ -115,23 +170,24 @@ final class AppModel: ObservableObject {
         lensLibrary.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &forwarding)
         // Someone editing a lens in another app changes the files; coming back to Backdrop picks the changes up.
         NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
-            .sink { [weak self] _ in MainActor.assumeIsolated { self?.reloadLenses() } }
+            .sink { [weak self] _ in MainActor.assumeIsolated { self?.reloadLenses(); self?.refreshScreenRecording() } }
             .store(in: &forwarding)
 
         wirePipeline()
         if library.background(withID: selectedID) == nil { selectedID = Background.softBlur.id }
         applySelection()
         pushLook()
+        pushStage()
         pipeline.setQuality(quality)
 
         automation.onMatch = { [weak self] rule in
             guard let self, let background = self.library.background(withID: rule.backgroundID) else { return }
             self.select(background.id)
-            HUD.shared.show(background.name)
+            self.announce(background.name)
         }
         automation.start()
         installer.updateIfOutdated()
-        registerHotkeys()
+        applyShortcuts()
         observeDevices()
         startPolling()
     }
@@ -149,6 +205,15 @@ final class AppModel: ObservableObject {
             }
         }
         preview.onDemandChanged = { [pipeline] wanted in pipeline.setPreviewEnabled(wanted) }
+        pipeline.onStageLayoutChanged = { [weak self] layout in
+            Task { @MainActor in self?.stageMoved(layout) }
+        }
+        pipeline.onStageReport = { [weak self] report in
+            Task { @MainActor in
+                guard let self, self.stageReport != report else { return }
+                self.stageReport = report
+            }
+        }
     }
 
     // MARK: Camera on / off
@@ -237,7 +302,14 @@ final class AppModel: ObservableObject {
     // MARK: Choosing backgrounds
 
     func select(_ id: UUID) {
-        guard library.background(withID: id) != nil else { return }
+        guard let chosen = library.background(withID: id) else { return }
+        if !chosen.isScreenShare {
+            lastNonShareID = id
+            defaults.set(id.uuidString, forKey: Keys.lastNonShare)
+        } else if !selectedBackground.isScreenShare {
+            // A fresh share starts live, never paused.
+            sharePaused = false
+        }
         selectedID = id
         defaults.set(id.uuidString, forKey: Keys.selected)
         applySelection(change: beginChange(selectedBackground.name))
@@ -257,16 +329,29 @@ final class AppModel: ObservableObject {
         let index = items.firstIndex { $0.id == selectedID } ?? 0
         let next = items[(index + step + items.count) % items.count]
         select(next.id)
-        HUD.shared.show(next.name)
+        announce(next.name)
+    }
+
+    /// Shows a brief label near the bottom of the screen, unless that has been switched off in the Studio's settings.
+    private func announce(_ text: String) {
+        if showsOnScreenMessages { HUD.shared.show(text) }
     }
 
     private func applySelection(change: Int? = nil) {
         let background = selectedBackground
-        let source = BackgroundSourceFactory.make(for: background, library: library)
-        (source as? WindowCaptureSource)?.onError = { [weak self] text in
-            Task { @MainActor in self?.message = text }
+        let source = BackgroundSourceFactory.make(for: background, library: library, capture: captureOptions)
+        let capture = source as? WindowCaptureSource
+        capture?.onError = { [weak self] text in
+            Task { @MainActor in
+                self?.message = text
+                self?.refreshScreenRecording()
+            }
         }
+        captureSource = capture
+        if !background.isScreenShare { stageReport = nil }
         pipeline.setBackground(background, source: source, change: change)
+        pushStage()
+        updateMirroring()
         Log.lens.notice("background: \(background.name, privacy: .public)")
     }
 
@@ -293,7 +378,7 @@ final class AppModel: ObservableObject {
         let lens = info?.make()
         pipeline.setLens(lens, change: beginChange(info?.name ?? "no lens"))
         Log.lens.notice("lens: \(info?.name ?? "none", privacy: .public)")
-        preview.mirrored = !(info?.scored == true || info?.showsText == true)
+        updateMirroring()
         lensStatus = lens?.status
 
         lensPoll?.cancel()
@@ -314,13 +399,13 @@ final class AppModel: ObservableObject {
         let index = stops.firstIndex { $0 == lensID } ?? 0
         let next = stops[(index + step + stops.count) % stops.count]
         selectLens(next)
-        HUD.shared.show(next.flatMap(lensLibrary.info(for:)).map { "\($0.glyph) \($0.name)" } ?? "No lens")
+        announce(next.flatMap(lensLibrary.info(for:)).map { "\($0.glyph) \($0.name)" } ?? "No lens")
     }
 
     /// New game, clean slate.
     func restartLens() {
         pipeline.restartLens()
-        if let info = selectedLens { HUD.shared.show("\(info.glyph) \(info.name): new game") }
+        if let info = selectedLens { announce("\(info.glyph) \(info.name): new game") }
     }
 
     func bestScore(for id: String) -> Int { scores.best(for: id) }
@@ -335,8 +420,18 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func addWindow(_ choice: WindowChoice) { select(library.addWindow(bundleID: choice.bundleID, appName: choice.appName, title: choice.title).id) }
-    func addScreen() { select(library.addDisplay().id) }
+    func addWindow(_ choice: WindowChoice) {
+        select(library.addWindow(bundleID: choice.bundleID, appName: choice.appName, title: choice.title, windowID: choice.id).id)
+    }
+
+    /// Shares the main screen, or with a choice a particular one.
+    func addScreen(_ choice: DisplayChoice? = nil) {
+        if let choice, NSScreen.screens.count > 1 {
+            select(library.addDisplay(displayID: choice.id, name: choice.name).id)
+        } else {
+            select(library.addDisplay().id)
+        }
+    }
 
     func saveGenerated(from url: URL, prompt: String) {
         do { select(try library.addGenerated(from: url, prompt: prompt).id) } catch { message = error.localizedDescription }
@@ -360,25 +455,207 @@ final class AppModel: ObservableObject {
         if wasSelected { select(Background.off.id) }
     }
 
-    /// Windows that can be used as a live backdrop. Asks for Screen Recording the first time.
-    func availableWindows() async -> [WindowChoice] {
-        guard let content = try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true) else {
-            message = "Allow Backdrop in System Settings › Privacy & Security › Screen Recording to use a window as your background."
-            return []
-        }
+    /// The windows that can be shared, from a look at what is on screen (see `ShareCatalog`).
+    nonisolated static func windows(in content: SCShareableContent) -> [WindowChoice] {
         let me = Bundle.main.bundleIdentifier
         return content.windows.compactMap { window in
             guard let app = window.owningApplication, app.bundleIdentifier != me,
                   window.windowLayer == 0, window.frame.width > 200, window.frame.height > 150 else { return nil }
-            return WindowChoice(id: window.windowID, bundleID: app.bundleIdentifier, appName: app.applicationName, title: window.title ?? "")
+            return WindowChoice(id: window.windowID, bundleID: app.bundleIdentifier, appName: app.applicationName, title: window.title ?? "",
+                                size: window.frame.size)
         }
-        .sorted { ($0.appName, $0.title) < ($1.appName, $1.title) }
+        .sorted { ($0.appName.localizedLowercase, $0.title) < ($1.appName.localizedLowercase, $1.title) }
+    }
+
+    /// The screens, named as macOS names them, main first.
+    static func displays() -> [DisplayChoice] {
+        let main = CGMainDisplayID()
+        return NSScreen.screens.compactMap { screen -> DisplayChoice? in
+            guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { return nil }
+            let id = CGDirectDisplayID(number.uint32Value)
+            return DisplayChoice(id: id, name: screen.localizedName, size: screen.frame.size, isMain: id == main)
+        }
+        .sorted { $0.isMain && !$1.isMain }
+    }
+
+    // MARK: Present
+
+    var isSharingScreen: Bool { selectedBackground.isScreenShare }
+
+    /// Your screen is going out to the call right now: the camera is on, a screen or window is the background, it is not paused, and
+    /// the capture has not lost it.
+    var isScreenGoingOut: Bool {
+        guard isOn, isSharingScreen, !sharePaused else { return false }
+        let status = stageReport?.status ?? .live
+        return status != .lost && status != .denied
+    }
+
+    private var captureOptions: CaptureOptions { CaptureOptions(showsCursor: captureShowsCursor, framesPerSecond: captureFrameRate) }
+
+    private func pushCaptureOptions() { captureSource?.setOptions(captureOptions) }
+
+    /// A new layout from the interface: a slider, a toggle, a preset.
+    func setStage(_ layout: StageLayout) {
+        let previous = stage
+        let clamped = layout.clamped()
+        guard clamped != stage else { return }
+        stage = clamped
+        stageMemory.update(clamped)
+        saveStageSoon()
+        if clamped.surround != previous.surround || clamped.surroundBackdrop != previous.surroundBackdrop { pushSurround() }
+        pushStage()
+        if clamped.arrangement != previous.arrangement { updateMirroring() }
+    }
+
+    /// Changes one thing about the layout.
+    func updateStage(_ change: (inout StageLayout) -> Void) {
+        var next = stage
+        change(&next)
+        setStage(next)
+    }
+
+    func setArrangement(_ arrangement: StageArrangement) {
+        guard arrangement != stage.arrangement else { return }
+        stageMemory.switchTo(arrangement)
+        let next = stageMemory.current
+        stage = next
+        saveStageSoon()
+        pushSurround()
+        pushStage()
+        updateMirroring()
+        if isSharingScreen { announce(arrangement.title) }
+    }
+
+    func applyPreset(_ preset: StagePreset) {
+        let next = preset.apply(to: stage)
+        if next.arrangement != stage.arrangement {
+            stageMemory.switchTo(next.arrangement)
+        }
+        stage = next
+        stageMemory.update(next)
+        saveStageSoon()
+        pushSurround()
+        pushStage()
+        updateMirroring()
+    }
+
+    func togglePause() {
+        guard isSharingScreen else { return }
+        sharePaused.toggle()
+        pushStage()
+        announce(sharePaused ? "Sharing paused" : "Sharing resumed")
+    }
+
+    /// Back to the background in use before sharing started.
+    func stopSharing() {
+        let back = lastNonShareID.flatMap { library.background(withID: $0) }.map(\.id) ?? Background.softBlur.id
+        sharePaused = false
+        select(back)
+    }
+
+    /// The mouse or trackpad on the Studio preview.
+    func stagePointer(_ event: StagePointerEvent) { pipeline.sendStagePointer(event) }
+
+    func refreshScreenRecording() {
+        let allowed = CGPreflightScreenCaptureAccess()
+        if allowed != screenRecordingAllowed { screenRecordingAllowed = allowed }
+    }
+
+    func openScreenRecordingSettings() {
+        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
+    }
+
+    /// The backdrops that can go round a floating panel: everything but shared screens.
+    var surroundChoices: [Background] { library.items.filter { !$0.isScreenShare && $0.kind != .passthrough } }
+
+    private func pushStage() {
+        pipeline.setStage(stage, paused: sharePaused && isSharingScreen, title: isSharingScreen ? selectedBackground.name : nil)
+    }
+
+    private func pushSurround() {
+        guard stage.surround == .backdrop, stage.arrangement == .floatingPanel else {
+            pipeline.setStageSurround(nil)
+            return
+        }
+        let chosen = stage.surroundBackdrop.flatMap { library.background(withID: $0) }
+            ?? library.background(withID: Background.builtIns.first { $0.kind == .gradient(.midnight) }?.id ?? Background.softBlur.id)
+        guard let chosen, !chosen.isScreenShare else { pipeline.setStageSurround(nil); return }
+        pipeline.setStageSurround(BackgroundSourceFactory.make(for: chosen, library: library))
+    }
+
+    /// The pipeline moved something (your hands, the mouse): take it, without sending it straight back.
+    private func stageMoved(_ layout: StageLayout) {
+        guard layout.arrangement == stage.arrangement else { return }
+        stage = layout
+        stageMemory.update(layout)
+        saveStageSoon()
+    }
+
+    /// Saves half a second after the last change, so a drag is written once, not ten times a second.
+    private func saveStageSoon() {
+        stageSave?.cancel()
+        stageSave = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(500))
+            guard let self, !Task.isCancelled else { return }
+            if let data = try? JSONEncoder().encode(self.stageMemory) { self.defaults.set(data, forKey: Keys.stage) }
+        }
+    }
+
+    /// The preview is a mirror, except where words must read the right way round: games and lenses with text, and a shared screen
+    /// arranged as a panel or with you over it, where you look at your own slides.
+    private func updateMirroring() {
+        let info = selectedLens
+        let lensText = info?.scored == true || info?.showsText == true
+        let arranged = isSharingScreen && stage.arrangement.isArranged
+        let mirrored = !(lensText || arranged)
+        if preview.mirrored != mirrored { preview.mirrored = mirrored }
+    }
+
+    /// Every Present setting back to how it started; the share itself is kept.
+    func resetStage() {
+        stageMemory = StageMemory()
+        stageMemory.switchTo(stage.arrangement)
+        stage = stageMemory.current
+        saveStageSoon()
+        pushSurround()
+        pushStage()
     }
 
     // MARK: Settings
 
     private func pushLook() {
         pipeline.setParameters(CompositeParameters(edgeSoftness: edgeSoftness, lightWrap: lightWrap, colorMatch: colorMatch))
+    }
+
+    /// Whether the cutout quality and the three look sliders are all at their starting values.
+    var lookIsDefault: Bool {
+        let start = CompositeParameters()
+        return quality == .balanced && abs(edgeSoftness - start.edgeSoftness) < 0.001
+            && abs(lightWrap - start.lightWrap) < 0.001 && abs(colorMatch - start.colorMatch) < 0.001
+    }
+
+    /// Cutout quality and the look sliders back to how they started.
+    func resetLook() {
+        let start = CompositeParameters()
+        quality = .balanced
+        edgeSoftness = start.edgeSoftness
+        lightWrap = start.lightWrap
+        colorMatch = start.colorMatch
+    }
+
+    /// Every setting in the Studio's Camera and Settings panes back to how it started. Backgrounds, lenses, rules,
+    /// favourites and scores are kept, and so is "open at login", which is macOS's to remember.
+    func resetSettings() {
+        cameraID = nil
+        resetLook()
+        showsOnScreenMessages = true
+        shortcutsEnabled = true
+    }
+
+    /// Where imported, generated and recorded backgrounds are kept.
+    func showBackgroundsFolder() {
+        try? FileManager.default.createDirectory(at: library.directory, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(library.directory)
     }
 
     func setLaunchAtLogin(_ on: Bool) {
@@ -410,6 +687,20 @@ final class AppModel: ObservableObject {
 
     // MARK: Hot keys, devices, polling
 
+    private static let shortcutsTakenMessage = "Some keyboard shortcuts are taken by another app."
+
+    /// Registers the shortcuts, or gives the keys back when they have been switched off.
+    private func applyShortcuts() {
+        hotkeys.unregisterAll()
+        guard shortcutsEnabled else {
+            shortcutsTaken = false
+            if message == Self.shortcutsTakenMessage { message = nil }
+            return
+        }
+        registerHotkeys()
+    }
+
+    /// The same list is shown in the Studio's Settings pane (StudioSettings.shortcuts); keep them in step.
     private func registerHotkeys() {
         let modifiers = controlKey | optionKey
         let registered = [
@@ -418,15 +709,22 @@ final class AppModel: ObservableObject {
             hotkeys.register(keyCode: kVK_UpArrow, modifiers: modifiers) { [weak self] in MainActor.assumeIsolated { self?.cycleLens(by: 1) } },
             hotkeys.register(keyCode: kVK_DownArrow, modifiers: modifiers) { [weak self] in MainActor.assumeIsolated { self?.cycleLens(by: -1) } },
             hotkeys.register(keyCode: kVK_ANSI_R, modifiers: modifiers) { [weak self] in MainActor.assumeIsolated { self?.restartLens() } },
+            hotkeys.register(keyCode: kVK_ANSI_P, modifiers: modifiers) { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    if self.isSharingScreen { self.togglePause() } else { self.announce("Nothing is being shared") }
+                }
+            },
             hotkeys.register(keyCode: kVK_ANSI_B, modifiers: modifiers) { [weak self] in
                 MainActor.assumeIsolated {
                     guard let self else { return }
                     self.toggle()
-                    HUD.shared.show(self.isOn || self.isStarting ? "Camera on" : "Camera off")
+                    self.announce(self.isOn || self.isStarting ? "Camera on" : "Camera off")
                 }
             },
         ]
-        if registered.contains(false) { message = "Some keyboard shortcuts are taken by another app." }
+        shortcutsTaken = registered.contains(false)
+        if shortcutsTaken { message = Self.shortcutsTakenMessage }
     }
 
     private func observeDevices() {

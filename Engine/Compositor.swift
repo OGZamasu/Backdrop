@@ -127,8 +127,12 @@ final class Compositor {
 
     /// Puts the person (where `matte` is white) over `background`, with the colour tricks.
     func composite(camera: CIImage, matte refined: CIImage, background: CIImage, params: CompositeParameters = .init()) -> CIImage {
+        compositeSubject(fitted(camera), matte: refined, background: background, params: params)
+    }
+
+    /// The same, for a camera picture already on the output's pixels: fitted, or moved and scaled by Present.
+    func compositeSubject(_ base: CIImage, matte refined: CIImage, background: CIImage, params: CompositeParameters = .init()) -> CIImage {
         let r = rect
-        let base = fitted(camera)
 
         // Colour: nudge the subject toward the background's cast, then let background light wrap the edge.
         var subject = base

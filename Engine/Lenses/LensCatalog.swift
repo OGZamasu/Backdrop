@@ -87,7 +87,7 @@ enum LensCatalog {
     }
 
     static let filters: [LensInfo] = coreFilters + LookFilters.all + WorldFilters.all + HandFilters.all
-    static let faces: [LensInfo] = coreFaces + HeadwearFaces.all + ExpressionFaces.all
+    static let faces: [LensInfo] = coreFaces + HeadwearFaces.all + ExpressionFaces.all + DragonBallFaces.all
     static let games: [LensInfo] = coreGames + FlagshipHandGames.all + HandGames.all + HandGamesMore.all + FaceGames.all + BodyGames.all
     static let scenes: [LensInfo] = SceneCatalog.all + SceneCatalogMore.all
 

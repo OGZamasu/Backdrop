@@ -8,13 +8,32 @@ struct BackdropApp: App {
         MenuBarExtra {
             MenuBarView().environmentObject(model)
         } label: {
-            Image(systemName: model.isOn ? "person.crop.rectangle.fill" : "person.crop.rectangle")
+            // A red dot joins the icon while your screen is going out.
+            Image(nsImage: MenuBarIcon.image(on: model.isOn, sharing: model.isScreenGoingOut))
         }
         .menuBarExtraStyle(.window)
 
         Window("Backdrop Studio", id: "studio") {
             StudioView().environmentObject(model)
         }
-        .defaultSize(width: 920, height: 620)
+        .defaultSize(width: 1060, height: 700)
+        .commands { StudioCommands(model: model) }
+    }
+}
+
+/// ⌘, opens the Studio's Settings, like any other Mac app.
+private struct StudioCommands: Commands {
+    @Environment(\.openWindow) private var openWindow
+    let model: AppModel
+
+    var body: some Commands {
+        CommandGroup(replacing: .appSettings) {
+            Button("Settings…") {
+                model.studioPane = .settings
+                openWindow(id: "studio")
+                NSApp.activate(ignoringOtherApps: true)
+            }
+            .keyboardShortcut(",")
+        }
     }
 }

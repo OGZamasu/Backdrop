@@ -194,6 +194,24 @@ enum LensBrowserDirections {
                 pose.hands = [hand(.open, at: CGPoint(x: rightSpot.x, y: rightSpot.y + 6 * wave(t, 1.6)), angle: 0.12)]
                 return pose
             }
+        case "dragon-ball":
+            // Both fists up with a shout to power up to Super Saiyan, then cupped hands at the side charging a Kamehameha.
+            return LensBrowserDirection(seconds: 4.8) { t in
+                var pose = calm(t, smile: 0.25)
+                pose.offset = .zero
+                pose.lean = 0
+                let powering = t < 1.3
+                pose.mouthOpen = powering ? 0.6 * ease(t, start: 0.2, duration: 0.3) : 0.1
+                if powering {
+                    pose.hands = [hand(.fist, at: CGPoint(x: 425, y: 225), angle: 0.25, id: 1), hand(.fist, at: CGPoint(x: 855, y: 225), angle: -0.25, id: 2)]
+                } else {
+                    // Two open hands stacked at the right side, fingers pointing out across the picture.
+                    let size = handSize
+                    pose.hands = [hand(.open, at: CGPoint(x: 860 - 0.75 * size, y: 218 + 4 * wave(t, 1.3)), angle: -.pi / 2, id: 1),
+                                  hand(.open, at: CGPoint(x: 860 - 0.75 * size, y: 164 + 4 * wave(t, 1.3, 0.3)), angle: -.pi / 2, id: 2)]
+                }
+                return pose
+            }
         case "finger-lightning":
             return LensBrowserDirection(seconds: 1.4) { t in
                 var pose = calm(t, smile: 0.7)

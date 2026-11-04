@@ -35,8 +35,10 @@ struct MenuBarView: View {
                     Menu {
                         Button("Generate with AI…", systemImage: "wand.and.stars") { openStudio(request: .generate) }
                         Button("Image or Video…", systemImage: "photo") { openStudio(request: .importFile) }
-                        Button("Live Window…", systemImage: "macwindow") { openStudio(request: .liveWindow) }
-                        Button("Screen", systemImage: "display") { model.addScreen() }
+                        Button("Window or Screen…", systemImage: "macwindow") { openStudio(request: .share) }
+                        if NSScreen.screens.count <= 1 {
+                            Button("Share My Screen", systemImage: "display") { model.addScreen() }
+                        }
                     } label: {
                         Label("Add", systemImage: "plus")
                     }
@@ -46,13 +48,18 @@ struct MenuBarView: View {
                 BackgroundPicker(contentWidth: Self.width - Self.padding * 2)
             }
 
+            if model.isSharingScreen {
+                PresentQuickControls { openStudio(pane: .present) }
+            }
+
             LensPicker(width: Self.width - Self.padding * 2)
 
             VirtualCameraStatus()
 
             Divider()
-            HStack {
+            HStack(spacing: 14) {
                 Button("Studio…") { openStudio() }
+                Button("Settings…") { openStudio(pane: .settings) }
                 Spacer()
                 Button("Quit") { NSApplication.shared.terminate(nil) }
             }
@@ -81,8 +88,9 @@ struct MenuBarView: View {
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
-    private func openStudio(request: AppModel.StudioRequest? = nil) {
-        if request != nil { model.studioPane = .backgrounds }
+    private func openStudio(request: AppModel.StudioRequest? = nil, pane: StudioView.Pane? = nil) {
+        if let request { model.studioPane = request == .share ? .present : .backgrounds }
+        if let pane { model.studioPane = pane }
         model.studioRequest = request
         openWindow(id: "studio")
         NSApp.activate(ignoringOtherApps: true)

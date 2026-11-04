@@ -4,16 +4,32 @@ import UniformTypeIdentifiers
 
 struct StudioView: View {
     enum Pane: String, CaseIterable, Identifiable {
-        case backgrounds = "Backgrounds", lenses = "Lenses", automation = "Automation", camera = "Camera"
+        case backgrounds = "Backgrounds", present = "Present", lenses = "Lenses", automation = "Automation", camera = "Camera", settings = "Settings"
         var id: String { rawValue }
         var symbol: String {
             switch self {
             case .backgrounds: return "photo.on.rectangle.angled"
+            case .present: return "rectangle.inset.filled.and.person.filled"
             case .lenses: return "face.smiling"
             case .automation: return "wand.and.stars"
             case .camera: return "camera.aperture"
+            case .settings: return "gearshape"
             }
         }
+        /// ⌘1 to ⌘6 jump between the panes.
+        var key: KeyEquivalent {
+            switch self {
+            case .backgrounds: return "1"
+            case .present: return "2"
+            case .lenses: return "3"
+            case .automation: return "4"
+            case .camera: return "5"
+            case .settings: return "6"
+            }
+        }
+        /// What is on the picture, then how Backdrop itself is set up.
+        static let content: [Pane] = [.backgrounds, .present, .lenses, .automation]
+        static let setup: [Pane] = [.camera, .settings]
     }
 
     @EnvironmentObject private var model: AppModel
@@ -24,28 +40,52 @@ struct StudioView: View {
         HStack(spacing: 0) {
             sidebar
             Divider()
-            Group {
-                switch model.studioPane {
-                case .backgrounds: BackgroundsTab()
-                case .lenses: LensesTab()
-                case .automation: AutomationTab()
-                case .camera: CameraTab()
+            VStack(spacing: 0) {
+                StudioBanners()
+                Group {
+                    switch model.studioPane {
+                    case .backgrounds: BackgroundsTab()
+                    case .present: PresentTab()
+                    case .lenses: LensesTab()
+                    case .automation: AutomationTab()
+                    case .camera: CameraTab()
+                    case .settings: SettingsTab()
+                    }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(minWidth: 860, minHeight: 560)
+        .frame(minWidth: 980, minHeight: 600)
     }
 
     private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            ForEach(Pane.allCases) { item in
-                SidebarItem(pane: item, selected: item == model.studioPane) { model.studioPane = item }
+        VStack(alignment: .leading, spacing: 16) {
+            StudioCameraCard()
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(Pane.content) { item in
+                    SidebarItem(pane: item, selected: item == model.studioPane) { model.studioPane = item }
+                }
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Setup")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 2)
+                ForEach(Pane.setup) { item in
+                    SidebarItem(pane: item, selected: item == model.studioPane) { model.studioPane = item }
+                }
             }
             Spacer()
+            HStack {
+                Text(AppInfo.versionText).font(.caption2).foregroundStyle(.tertiary)
+                Spacer()
+                Button("Quit") { NSApplication.shared.terminate(nil) }.buttonStyle(.link).font(.caption)
+            }
+            .padding(.horizontal, 4)
         }
         .padding(12)
-        .frame(width: 190)
+        .frame(width: 220)
         .frame(maxHeight: .infinity)
         .background(Color(nsColor: .controlBackgroundColor))
     }
@@ -69,6 +109,7 @@ private struct SidebarItem: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .keyboardShortcut(pane.key, modifiers: .command)
         .background(selected ? Color.accentColor.opacity(0.16) : Color.primary.opacity(hovering ? 0.06 : 0),
                     in: RoundedRectangle(cornerRadius: 7, style: .continuous))
         .onHover { hovering = $0 }
@@ -98,7 +139,6 @@ struct PaneHeader<Actions: View>: View {
 struct BackgroundsTab: View {
     @EnvironmentObject private var model: AppModel
     @State private var showingImporter = false
-    @State private var showingWindowPicker = false
     @State private var showingGenerator = false
 
     var body: some View {
@@ -106,8 +146,7 @@ struct BackgroundsTab: View {
             PaneHeader(title: "Backgrounds") {
                 Menu {
                     Button("Image or Video…", systemImage: "photo") { showingImporter = true }
-                    Button("Live Window…", systemImage: "macwindow") { showingWindowPicker = true }
-                    Button("Screen", systemImage: "display") { model.addScreen() }
+                    Button("Window or Screen…", systemImage: "macwindow") { share() }
                     Divider()
                     Button("Generate with AI…", systemImage: "wand.and.stars") { showingGenerator = true }
                 } label: {
@@ -130,14 +169,15 @@ struct BackgroundsTab: View {
                     }
                     .padding(20)
                 }
+                // Told to fill the space: without it the grid stops at the width it would like, and a wider window shows a gap.
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 Divider()
-                Inspector().frame(width: 300)
+                Inspector().frame(width: 320)
             }
         }
         .fileImporter(isPresented: $showingImporter, allowedContentTypes: [.image, .movie], allowsMultipleSelection: true) { result in
             if case .success(let urls) = result { model.importFiles(urls) }
         }
-        .sheet(isPresented: $showingWindowPicker) { WindowPickerSheet() }
         .sheet(isPresented: $showingGenerator) { GenerateSheet() }
         .onAppear { handle(model.studioRequest) }
         .onChange(of: model.studioRequest) { _, request in handle(request) }
@@ -151,10 +191,16 @@ struct BackgroundsTab: View {
         DispatchQueue.main.async {
             switch request {
             case .importFile: showingImporter = true
-            case .liveWindow: showingWindowPicker = true
+            case .liveWindow, .share: share()
             case .generate: showingGenerator = true
             }
         }
+    }
+
+    /// Windows and screens are chosen and arranged in Present.
+    private func share() {
+        model.studioPane = .present
+        model.studioRequest = .share
     }
 }
 
@@ -167,24 +213,7 @@ private struct Inspector: View {
         let editable = background.origin != .builtIn
 
         VStack(alignment: .leading, spacing: 14) {
-            ZStack {
-                PreviewView(relay: model.preview)
-                if !model.isOn {
-                    VStack(spacing: 8) {
-                        Image(systemName: "video.slash").font(.title)
-                        Button("Turn On Camera") { model.turnOn() }.disabled(model.isStarting)
-                    }
-                    .foregroundStyle(.secondary)
-                }
-            }
-            .aspectRatio(16 / 9, contentMode: .fit)
-            .overlay(alignment: .bottomLeading) { SwitchingBadge() }
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-
-            if let message = model.message {
-                Label(message, systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
-            }
+            StudioPreview()
 
             VStack(alignment: .leading, spacing: 6) {
                 if editable {
@@ -225,61 +254,13 @@ private struct Inspector: View {
         case .maze: return "The old Windows maze screensaver: a walk through brick corridors."
         case .image: return background.origin == .generated ? "Generated on this Mac." : "A still image."
         case .video: return "A looping video."
-        case .window: return "A live window behind you."
-        case .display: return "Your screen behind you."
+        case .window: return "A live window. Arrange it in Present."
+        case .display, .screen: return "Your screen. Arrange it in Present."
         }
     }
 }
 
 // MARK: - Sheets
-
-private struct WindowPickerSheet: View {
-    @EnvironmentObject private var model: AppModel
-    @Environment(\.dismiss) private var dismiss
-    @State private var windows: [WindowChoice] = []
-    @State private var loading = true
-    @State private var selection: WindowChoice.ID?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Live Window").font(.title2.bold())
-            Text("Pick a window to show behind you: slides, a dashboard, a terminal.")
-                .foregroundStyle(.secondary)
-            Group {
-                if loading {
-                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if windows.isEmpty {
-                    ContentUnavailableView("No windows found", systemImage: "macwindow",
-                                           description: Text(model.message ?? "Open the window you want, then try again."))
-                } else {
-                    List(windows, selection: $selection) { window in
-                        HStack {
-                            Text(window.appName).fontWeight(.medium)
-                            if !window.title.isEmpty { Text(window.title).foregroundStyle(.secondary).lineLimit(1) }
-                        }
-                    }
-                }
-            }
-            .frame(height: 260)
-            HStack {
-                Spacer()
-                Button("Cancel") { dismiss() }
-                Button("Use This Window") {
-                    if let choice = windows.first(where: { $0.id == selection }) { model.addWindow(choice) }
-                    dismiss()
-                }
-                .keyboardShortcut(.defaultAction)
-                .disabled(selection == nil)
-            }
-        }
-        .padding(24)
-        .frame(width: 520)
-        .task {
-            windows = await model.availableWindows()
-            loading = false
-        }
-    }
-}
 
 private struct GenerateSheet: View {
     @EnvironmentObject private var model: AppModel
@@ -396,12 +377,11 @@ struct AutomationTab: View {
     }
 
     private var shortcuts: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Shortcuts").font(.caption.bold()).foregroundStyle(.secondary)
-            Text("⌃⌥→ next background    ⌃⌥← previous    ⌃⌥B camera on/off")
-                .font(.caption).foregroundStyle(.secondary)
+        HStack(alignment: .firstTextBaseline) {
             Text("Rules run when something changes, such as switching apps or a meeting starting. Picking a background by hand holds until the next change.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 12)
+            Button("Keyboard Shortcuts…") { model.studioPane = .settings }.buttonStyle(.link).font(.caption)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -547,69 +527,5 @@ private struct AddRuleSheet: View {
         }
         model.rules.rules.append(AutomationRule(trigger: trigger, backgroundID: backgroundID))
         dismiss()
-    }
-}
-
-// MARK: - Camera
-
-struct CameraTab: View {
-    @EnvironmentObject private var model: AppModel
-
-    var body: some View {
-        VStack(spacing: 0) {
-            PaneHeader(title: "Camera") { EmptyView() }
-            Divider()
-            form
-        }
-    }
-
-    private var form: some View {
-        Form {
-            Section("Camera") {
-                Picker("Use", selection: $model.cameraID) {
-                    Text("Automatic").tag(String?.none)
-                    ForEach(model.cameras, id: \.uniqueID) { Text($0.localizedName).tag(Optional($0.uniqueID)) }
-                }
-            }
-
-            Section {
-                Picker("Cutout quality", selection: $model.quality) {
-                    Text("Fast").tag(PersonSegmenter.Quality.fast)
-                    Text("Balanced").tag(PersonSegmenter.Quality.balanced)
-                    Text("Accurate").tag(PersonSegmenter.Quality.accurate)
-                }
-                .pickerStyle(.segmented)
-                slider("Edge softness", value: $model.edgeSoftness, range: 0.5...5)
-                slider("Light wrap", value: $model.lightWrap, range: 0...1)
-                slider("Colour match", value: $model.colorMatch, range: 0...1)
-            } header: {
-                Text("Cutout and look")
-            } footer: {
-                Text("Light wrap lets the background's glow touch your edges. Colour match nudges your skin tones toward the scene. Accurate gives cleaner hair but uses more power.")
-            }
-
-            Section("Backdrop Camera") {
-                LabeledContent("Status") {
-                    Text(model.virtualCameraInstalled ? "Installed" : "Not installed")
-                        .foregroundStyle(model.virtualCameraInstalled ? .green : .secondary)
-                }
-                if model.virtualCameraInstalled {
-                    Button("Remove Backdrop Camera", role: .destructive) { model.installer.uninstall() }
-                } else {
-                    VirtualCameraStatus()
-                }
-            }
-
-            Section("General") {
-                Toggle("Open at login", isOn: Binding(get: { model.launchAtLogin }, set: { model.setLaunchAtLogin($0) }))
-            }
-        }
-        .formStyle(.grouped)
-    }
-
-    private func slider(_ title: String, value: Binding<Double>, range: ClosedRange<Double>) -> some View {
-        LabeledContent(title) {
-            Slider(value: value, in: range).frame(width: 220)
-        }
     }
 }

@@ -74,10 +74,12 @@ final class LensServices {
     private let canvas: OverlayCanvas?
     private var pool: CVPixelBufferPool?
 
-    init(context: CIContext, size: CGSize) {
+    /// `overlays` is how many transparent layers can be in use in one frame; a lens that paints more than four (the Dragon Ball lens
+    /// paints seven) makes its own services with more.
+    init(context: CIContext, size: CGSize, overlays: Int = 4) {
         self.context = context
         self.size = size
-        canvas = OverlayCanvas(size: size, slots: 4)
+        canvas = OverlayCanvas(size: size, slots: overlays)
         let attributes: [CFString: Any] = [
             kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA,
             kCVPixelBufferWidthKey: Int(size.width),
