@@ -7,6 +7,8 @@ import ImageIO
 protocol BackgroundSource: AnyObject {
     /// Letterbox over a blurred copy instead of cropping. Right for windows and screens, wrong for photos.
     var fitsContent: Bool { get }
+    /// Opens a camera of its own (a second camera), so it should not be started until Backdrop's camera is on.
+    var needsLiveCamera: Bool { get }
     func start()
     func stop()
     /// The newest frame, or nil if the source hasn't produced one yet. `camera` is the raw camera frame.
@@ -15,6 +17,7 @@ protocol BackgroundSource: AnyObject {
 
 extension BackgroundSource {
     var fitsContent: Bool { false }
+    var needsLiveCamera: Bool { false }
     func start() {}
     func stop() {}
 }
@@ -43,6 +46,8 @@ enum BackgroundSourceFactory {
             return WindowCaptureSource(target: .display(nil), options: capture)
         case .screen(let displayID):
             return WindowCaptureSource(target: .display(displayID), options: capture)
+        case .camera(let deviceID):
+            return ExtraCameraSource(deviceID: deviceID)
         case .solid(let hex, let lit):
             return SolidBackdropSource(hex: hex, lit: lit)
         case .treated(let treatment):

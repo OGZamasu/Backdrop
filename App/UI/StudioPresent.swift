@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Sharing a window or your screen into the call, and arranging it: behind you, as a panel floating in the room, or filling the
-/// picture with you over it. The live preview sits beside the controls and can be grabbed with the mouse; with "Control with your
+/// Sharing a window, your screen or a second camera into the call, and arranging it: behind you, as a panel floating in the room,
+/// or filling the picture with you over it. The live preview sits beside the controls and can be grabbed with the mouse; with "Control with your
 /// hands" on, a pinch in the air does the same.
 struct PresentTab: View {
     @EnvironmentObject private var model: AppModel
@@ -10,11 +10,14 @@ struct PresentTab: View {
     var body: some View {
         VStack(spacing: 0) {
             PaneHeader(title: "Present") {
-                if model.isSharingScreen {
+                if model.isPresenting {
+                    let camera = model.isShowingSecondCamera
                     Button { model.togglePause() } label: {
-                        Label(model.sharePaused ? "Resume Sharing" : "Pause Sharing", systemImage: model.sharePaused ? "play.fill" : "pause.fill")
+                        Label(model.sharePaused ? (camera ? "Resume" : "Resume Sharing") : (camera ? "Pause" : "Pause Sharing"),
+                              systemImage: model.sharePaused ? "play.fill" : "pause.fill")
                     }
-                    .help(model.sharePaused ? "Show your screen again (⌃⌥P)" : "Show a calm “Paused” card instead of your screen (⌃⌥P)")
+                    .help(model.sharePaused ? "Show it again (⌃⌥P)"
+                          : camera ? "Show a calm “Paused” card and close the camera (⌃⌥P)" : "Show a calm “Paused” card instead of your screen (⌃⌥P)")
                 }
                 Button { model.resetStage() } label: { Label("Reset Layout", systemImage: "arrow.counterclockwise") }
                     .help("The panel, you and the look back to how they started")
@@ -48,8 +51,8 @@ struct PresentTab: View {
     }
 
     private var previewHint: String {
-        if !model.isSharingScreen { return "Share a window or screen to see it here." }
-        if !model.stage.arrangement.isArranged { return "Choose Floating Panel or Presenter to move and resize your screen and yourself." }
+        if !model.isPresenting { return "Share a window, screen or camera to see it here." }
+        if !model.stage.arrangement.isArranged { return "Choose Floating Panel or Presenter to move and resize it, and yourself." }
         return "Drag to move. Pinch or scroll to resize. Double-click to zoom. The preview shows what everyone on the call sees, so your slides read the right way round."
     }
 
@@ -73,39 +76,49 @@ struct PresentTab: View {
     }
 
     private var sharing: some View {
-        Section {
-            if !model.screenRecordingAllowed && !model.isSharingScreen {
-                ScreenPermissionCard()
-                Button("Choose Window or Screen…") { showingPicker = true }.buttonStyle(.link)
-            } else if !model.isSharingScreen {
+        let camera = model.isShowingSecondCamera
+        return Section {
+            if !model.isPresenting {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Nothing is shared yet").font(.headline)
-                    Text("Pick a window (your slides, a browser tab, a design) or a whole screen. It goes out through Backdrop Camera, so it works in any call.")
+                    Text("Pick a window (your slides, a browser tab, a design), a whole screen, or a second camera: your desk, a whiteboard, the room from another angle, an iPhone. It goes out through Backdrop Camera, so it works in any call.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    Button("Choose Window or Screen…") { showingPicker = true }
+                    Button("Choose Window, Screen or Camera…") { showingPicker = true }
                         .buttonStyle(.borderedProminent)
                         .padding(.top, 2)
+                    if !model.screenRecordingAllowed {
+                        Text("A window or screen needs Screen Recording; macOS asks the first time you pick one. A camera does not.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 .padding(.vertical, 4)
             } else {
                 SharedSourceRow(change: { showingPicker = true })
-                if model.stageReport?.status == .denied { ScreenPermissionCard() }
-                Toggle("Show the pointer", isOn: $model.captureShowsCursor)
-                Picker("Frame rate", selection: $model.captureFrameRate) {
-                    Text("30 fps").tag(30)
-                    Text("60 fps").tag(60)
+                if model.stageReport?.status == .denied {
+                    if camera { CameraPermissionCard() } else { ScreenPermissionCard() }
                 }
-                .pickerStyle(.segmented)
+                if !camera {
+                    Toggle("Show the pointer", isOn: $model.captureShowsCursor)
+                    Picker("Frame rate", selection: $model.captureFrameRate) {
+                        Text("30 fps").tag(30)
+                        Text("60 fps").tag(60)
+                    }
+                    .pickerStyle(.segmented)
+                }
                 Toggle("Name under the panel", isOn: binding(\.showsLabel))
                     .disabled(model.stage.arrangement != .floatingPanel)
-                    .help("A small label with the window’s name, under the floating panel")
+                    .help(camera ? "A small label with the camera’s name, under the floating panel" : "A small label with the window’s name, under the floating panel")
             }
         } header: {
             Text("Sharing")
         } footer: {
-            Text(model.isSharingScreen
+            Text(camera
+                 ? "A second camera is only on while it is showing: it closes when you pause, stop, or turn Backdrop’s camera off. Pause with ⌃⌥P from any app: everyone sees a calm “Paused” card until you resume."
+                 : model.isPresenting
                  ? "60 fps is smoother for scrolling and video, and uses more power. Pause with ⌃⌥P from any app: everyone sees a calm “Paused” card until you resume."
                  : "Only what you pick is shared, and Backdrop’s own windows are always left out.")
         }
@@ -255,15 +268,17 @@ private struct SharedSourceRow: View {
             }
             Spacer(minLength: 8)
             Button("Change…", action: change)
-            Button("Stop Sharing") { model.stopSharing() }
+            Button(model.isShowingSecondCamera ? "Stop Showing" : "Stop Sharing") { model.stopSharing() }
         }
         .padding(.vertical, 2)
     }
 
     private func detail(_ status: String) -> String {
         switch model.stageReport?.status {
-        case .lost?: return "Window closed. It comes back here when it’s open again."
-        case .denied?: return "Screen Recording is off for Backdrop."
+        case .lost?:
+            return model.isShowingSecondCamera ? "Disconnected. It comes back here when it’s plugged in."
+                                               : "Window closed. It comes back here when it’s open again."
+        case .denied?: return model.isShowingSecondCamera ? "Camera access is off for Backdrop." : "Screen Recording is off for Backdrop."
         default: return model.isOn ? status : "Ready. Turn the camera on to share it."
         }
     }
@@ -276,6 +291,9 @@ private struct SharedSourceRow: View {
             } else {
                 Image(systemName: "macwindow").font(.title2).foregroundStyle(.secondary)
             }
+        case .camera(let deviceID):
+            let kind = model.extraCameras.first { $0.id == deviceID }?.kind
+            Image(systemName: kind?.symbol ?? "video").font(.title2).foregroundStyle(.secondary)
         default:
             Image(systemName: "display").font(.title2).foregroundStyle(.secondary)
         }

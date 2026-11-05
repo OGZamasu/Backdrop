@@ -98,6 +98,20 @@ final class BackgroundLibrary: ObservableObject {
         return item
     }
 
+    /// Adds a second camera, or picks the one already in the library for that same camera (under its newest name), so choosing it
+    /// again does not pile up copies.
+    @discardableResult
+    func addCamera(deviceID: String, name: String) -> Background {
+        let kind = BackgroundKind.camera(deviceID: deviceID)
+        if let existing = userItems.first(where: { $0.kind == kind }) {
+            if existing.name != name { update(existing.id) { $0.name = name } }
+            return background(withID: existing.id) ?? existing
+        }
+        let item = Background(id: UUID(), name: name, kind: kind, origin: .imported)
+        append(item)
+        return item
+    }
+
     // MARK: Editing
 
     func update(_ id: UUID, _ change: (inout Background) -> Void) {

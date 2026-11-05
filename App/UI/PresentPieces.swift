@@ -242,7 +242,7 @@ struct StagePointerSurface: NSViewRepresentable {
 struct PresentPreview: View {
     @EnvironmentObject private var model: AppModel
 
-    private var interactive: Bool { model.isOn && model.isSharingScreen && model.stage.arrangement.isArranged }
+    private var interactive: Bool { model.isOn && model.isPresenting && model.stage.arrangement.isArranged }
 
     var body: some View {
         StudioPreview()
@@ -255,7 +255,7 @@ struct PresentPreview: View {
                 }
             }
             .overlay(alignment: .topTrailing) {
-                if model.isOn && model.isSharingScreen { ShareStatusPill().padding(8) }
+                if model.isOn && model.isPresenting { ShareStatusPill().padding(8) }
             }
     }
 }
@@ -313,7 +313,7 @@ struct HandTrackingIndicator: View {
 
     private var state: (text: String, color: Color) {
         guard model.isOn else { return ("Turn the camera on to try it.", .secondary) }
-        guard model.isSharingScreen else { return ("Share a window or screen to use your hands.", .secondary) }
+        guard model.isPresenting else { return ("Share a window, screen or camera to use your hands.", .secondary) }
         guard model.stage.arrangement.isArranged else { return ("Choose Floating Panel or Presenter to use your hands.", .secondary) }
         guard let seen = model.stageReport?.handsSeen else { return ("Starting hand tracking…", .secondary) }
         switch seen {
@@ -343,11 +343,15 @@ struct ShareStatusPill: View {
 
     static func describe(_ model: AppModel) -> (text: String, color: Color) {
         if model.sharePaused { return ("Paused", .orange) }
+        // Red means your screen is going out; a second camera is something you chose to show, so it is green.
+        let camera = model.isShowingSecondCamera
         switch model.stageReport?.status ?? .starting {
-        case .live: return (model.isOn ? "Sharing" : "Ready", model.isOn ? .red : .secondary)
+        case .live:
+            if !model.isOn { return ("Ready", .secondary) }
+            return camera ? ("Showing", .green) : ("Sharing", .red)
         case .starting: return ("Starting…", .secondary)
         case .paused: return ("Paused", .orange)
-        case .lost: return ("Window closed", .orange)
+        case .lost: return (camera ? "Disconnected" : "Window closed", .orange)
         case .denied: return ("Not allowed", .orange)
         }
     }

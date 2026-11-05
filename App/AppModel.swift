@@ -57,6 +57,8 @@ final class AppModel: ObservableObject {
     private var missingMonitor = CameraMissingMonitor()
     private var pollCount = 0
     @Published private(set) var cameras: [AVCaptureDevice] = []
+    /// The cameras that could be shown as a second picture: everything plugged in except the main camera and Backdrop's own.
+    @Published private(set) var extraCameras: [CameraChoice] = []
     @Published private(set) var selectedID: UUID
     /// A problem worth showing the user, such as a denied permission.
     @Published var message: String?
@@ -96,6 +98,8 @@ final class AppModel: ObservableObject {
         didSet {
             defaults.set(cameraID, forKey: Keys.camera)
             if isOn { camera.start(deviceID: cameraID) { [weak self] in self?.report($0) } }
+            refreshCameras()
+            dropSecondCameraIfMain()
         }
     }
     @Published var quality: PersonSegmenter.Quality {
@@ -189,6 +193,8 @@ final class AppModel: ObservableObject {
         installer.updateIfOutdated()
         applyShortcuts()
         observeDevices()
+        refreshCameras()
+        dropSecondCameraIfMain()
         startPolling()
     }
 
@@ -303,10 +309,10 @@ final class AppModel: ObservableObject {
 
     func select(_ id: UUID) {
         guard let chosen = library.background(withID: id) else { return }
-        if !chosen.isScreenShare {
+        if !chosen.isStageContent {
             lastNonShareID = id
             defaults.set(id.uuidString, forKey: Keys.lastNonShare)
-        } else if !selectedBackground.isScreenShare {
+        } else if !selectedBackground.isStageContent {
             // A fresh share starts live, never paused.
             sharePaused = false
         }
@@ -348,7 +354,7 @@ final class AppModel: ObservableObject {
             }
         }
         captureSource = capture
-        if !background.isScreenShare { stageReport = nil }
+        if !background.isStageContent { stageReport = nil }
         pipeline.setBackground(background, source: source, change: change)
         pushStage()
         updateMirroring()
@@ -433,6 +439,11 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Shows a second camera: behind you, as a panel, or filling the picture, like a shared window.
+    func addCamera(_ choice: CameraChoice) {
+        select(library.addCamera(deviceID: choice.id, name: choice.name).id)
+    }
+
     func saveGenerated(from url: URL, prompt: String) {
         do { select(try library.addGenerated(from: url, prompt: prompt).id) } catch { message = error.localizedDescription }
     }
@@ -480,7 +491,34 @@ final class AppModel: ObservableObject {
 
     // MARK: Present
 
+    /// A window, a screen or a second camera is on the picture, so there is something to arrange.
+    var isPresenting: Bool { selectedBackground.isStageContent }
+
+    /// A window or a screen is on the picture: what the "your screen is going out" indicators and Screen Recording are about.
     var isSharingScreen: Bool { selectedBackground.isScreenShare }
+
+    /// A second camera is on the picture.
+    var isShowingSecondCamera: Bool {
+        if case .camera = selectedBackground.kind { return true }
+        return false
+    }
+
+    /// The second camera on the picture, if it is also the one now chosen as the main camera: the same camera twice is only a copy
+    /// of you, so the second picture goes away and the background it replaced comes back.
+    private func dropSecondCameraIfMain() {
+        guard case .camera(let id) = selectedBackground.kind, id == mainCameraID else { return }
+        let name = selectedBackground.name
+        stopSharing()
+        message = "\(name) is now your main camera, so it can’t also be the second one."
+    }
+
+    /// The camera Backdrop is using as the main one: the one chosen, or the first it can find.
+    var mainCameraID: String? { ExtraCameras.mainCameraID(selected: cameraID, available: cameras) }
+
+    private func refreshCameras() {
+        cameras = CameraCapture.availableDevices()
+        extraCameras = ExtraCameras.discover(excluding: mainCameraID)
+    }
 
     /// Your screen is going out to the call right now: the camera is on, a screen or window is the background, it is not paused, and
     /// the capture has not lost it.
@@ -523,7 +561,7 @@ final class AppModel: ObservableObject {
         pushSurround()
         pushStage()
         updateMirroring()
-        if isSharingScreen { announce(arrangement.title) }
+        if isPresenting { announce(arrangement.title) }
     }
 
     func applyPreset(_ preset: StagePreset) {
@@ -540,7 +578,7 @@ final class AppModel: ObservableObject {
     }
 
     func togglePause() {
-        guard isSharingScreen else { return }
+        guard isPresenting else { return }
         sharePaused.toggle()
         pushStage()
         announce(sharePaused ? "Sharing paused" : "Sharing resumed")
@@ -565,11 +603,11 @@ final class AppModel: ObservableObject {
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
     }
 
-    /// The backdrops that can go round a floating panel: everything but shared screens.
-    var surroundChoices: [Background] { library.items.filter { !$0.isScreenShare && $0.kind != .passthrough } }
+    /// The backdrops that can go round a floating panel: everything but shared screens and cameras.
+    var surroundChoices: [Background] { library.items.filter { !$0.isStageContent && $0.kind != .passthrough } }
 
     private func pushStage() {
-        pipeline.setStage(stage, paused: sharePaused && isSharingScreen, title: isSharingScreen ? selectedBackground.name : nil)
+        pipeline.setStage(stage, paused: sharePaused && isPresenting, title: isPresenting ? selectedBackground.name : nil)
     }
 
     private func pushSurround() {
@@ -579,7 +617,7 @@ final class AppModel: ObservableObject {
         }
         let chosen = stage.surroundBackdrop.flatMap { library.background(withID: $0) }
             ?? library.background(withID: Background.builtIns.first { $0.kind == .gradient(.midnight) }?.id ?? Background.softBlur.id)
-        guard let chosen, !chosen.isScreenShare else { pipeline.setStageSurround(nil); return }
+        guard let chosen, !chosen.isStageContent else { pipeline.setStageSurround(nil); return }
         pipeline.setStageSurround(BackgroundSourceFactory.make(for: chosen, library: library))
     }
 
@@ -606,7 +644,7 @@ final class AppModel: ObservableObject {
     private func updateMirroring() {
         let info = selectedLens
         let lensText = info?.scored == true || info?.showsText == true
-        let arranged = isSharingScreen && stage.arrangement.isArranged
+        let arranged = isPresenting && stage.arrangement.isArranged
         let mirrored = !(lensText || arranged)
         if preview.mirrored != mirrored { preview.mirrored = mirrored }
     }
@@ -712,7 +750,7 @@ final class AppModel: ObservableObject {
             hotkeys.register(keyCode: kVK_ANSI_P, modifiers: modifiers) { [weak self] in
                 MainActor.assumeIsolated {
                     guard let self else { return }
-                    if self.isSharingScreen { self.togglePause() } else { self.announce("Nothing is being shared") }
+                    if self.isPresenting { self.togglePause() } else { self.announce("Nothing is being shared") }
                 }
             },
             hotkeys.register(keyCode: kVK_ANSI_B, modifiers: modifiers) { [weak self] in
@@ -730,7 +768,7 @@ final class AppModel: ObservableObject {
     private func observeDevices() {
         for name in [AVCaptureDevice.wasConnectedNotification, AVCaptureDevice.wasDisconnectedNotification] {
             NotificationCenter.default.publisher(for: name).receive(on: DispatchQueue.main)
-                .sink { [weak self] _ in self?.cameras = CameraCapture.availableDevices() }
+                .sink { [weak self] _ in self?.refreshCameras() }
                 .store(in: &forwarding)
         }
     }

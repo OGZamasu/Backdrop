@@ -38,7 +38,7 @@ struct StudioCameraCard: View {
             Divider()
 
             VStack(alignment: .leading, spacing: 5) {
-                showing("photo.on.rectangle.angled", model.selectedBackground.name, pane: model.isSharingScreen ? .present : .backgrounds)
+                showing("photo.on.rectangle.angled", model.selectedBackground.name, pane: model.isPresenting ? .present : .backgrounds)
                 showing("face.smiling", model.selectedLens.map { "\($0.glyph) \($0.name)" } ?? "No lens", pane: .lenses)
                 if model.isSharingScreen { sharing }
             }

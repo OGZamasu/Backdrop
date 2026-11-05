@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import ScreenCaptureKit
 import SwiftUI
 
@@ -81,7 +82,8 @@ final class ShareCatalog: ObservableObject {
     }
 }
 
-/// The picker for what to share: screens first, then every window grouped by its app, each with a live picture, and a search.
+/// The picker for what to share: screens first, then cameras, then every window grouped by its app. Screens and windows have a live
+/// picture; cameras do not, since looking would turn every camera on. A search narrows all of them.
 struct SharePickerSheet: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
@@ -92,6 +94,7 @@ struct SharePickerSheet: View {
     enum Choice: Hashable {
         case window(CGWindowID)
         case display(CGDirectDisplayID)
+        case camera(String)
     }
 
     private var groups: [(app: String, bundleID: String, windows: [WindowChoice])] {
@@ -108,6 +111,19 @@ struct SharePickerSheet: View {
         return order.compactMap { id in byApp[id].map { (app: $0[0].appName, bundleID: id, windows: $0) } }
     }
 
+    private var shownCameras: [CameraChoice] {
+        let query = search.trimmingCharacters(in: .whitespaces)
+        return model.extraCameras.filter {
+            query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) || $0.kind.label.localizedCaseInsensitiveContains(query)
+                || "camera".contains(query.lowercased())
+        }
+    }
+
+    private var cameraSelected: Bool {
+        if case .camera? = selection { return true }
+        return false
+    }
+
     private var shownDisplays: [DisplayChoice] {
         let query = search.trimmingCharacters(in: .whitespaces)
         return catalog.displays.filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) || "screen".contains(query.lowercased()) }
@@ -116,8 +132,8 @@ struct SharePickerSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Share a Window or Screen").font(.title2.bold())
-                Text("It goes out through Backdrop Camera, so it works in Discord, Zoom or any other app. Backdrop’s own windows are always left out.")
+                Text("Share a Window, Screen or Camera").font(.title2.bold())
+                Text("It goes out through Backdrop Camera, so it works in Discord, Zoom or any other app. Backdrop’s own windows are always left out, and a second camera is only on while it is showing.")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -126,7 +142,7 @@ struct SharePickerSheet: View {
 
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("Search windows", text: $search).textFieldStyle(.plain)
+                TextField("Search", text: $search).textFieldStyle(.plain)
                 if !search.isEmpty {
                     Button { search = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }
                         .buttonStyle(.plain)
@@ -146,10 +162,12 @@ struct SharePickerSheet: View {
             HStack {
                 if case .window? = selection {
                     Text("Tip: resize the window and the panel follows its shape.").font(.caption).foregroundStyle(.secondary)
+                } else if cameraSelected {
+                    Text("Tip: float it as a panel, or put it behind you, and move it with your hands.").font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button("Cancel") { dismiss() }
-                Button("Share") { share() }
+                Button(cameraSelected ? "Show" : "Share") { share() }
                     .keyboardShortcut(.defaultAction)
                     .disabled(selection == nil)
             }
@@ -165,53 +183,99 @@ struct SharePickerSheet: View {
     }
 
     @ViewBuilder private var content: some View {
-        if catalog.loading {
-            ProgressView("Looking for windows…").frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if catalog.denied {
-            ScreenPermissionCard(compact: false)
-                .padding(40)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    if !shownDisplays.isEmpty {
-                        section(title: shownDisplays.count > 1 ? "Screens" : "Your Screen", icon: Image(systemName: "display")) {
-                            ForEach(shownDisplays) { display in
-                                ShareCard(title: display.name, subtitle: "\(Int(display.size.width)) × \(Int(display.size.height))" + (display.isMain ? " · Main" : ""),
-                                          image: catalog.thumbnails[ShareCatalog.key(display: display.id)], aspect: display.size.width / max(display.size.height, 1),
-                                          placeholder: Image(systemName: "display"), selected: selection == .display(display.id)) {
-                                    selection = .display(display.id)
-                                } onDouble: {
-                                    selection = .display(display.id)
-                                    share()
-                                }
-                            }
-                        }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                if catalog.loading {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Looking for windows…").foregroundStyle(.secondary)
                     }
-                    ForEach(groups, id: \.bundleID) { group in
-                        section(title: group.app, icon: appIcon(group.bundleID).map { Image(nsImage: $0) } ?? Image(systemName: "app")) {
-                            ForEach(group.windows) { window in
-                                ShareCard(title: window.title.isEmpty ? window.appName : window.title, subtitle: nil,
-                                          image: catalog.thumbnails[ShareCatalog.key(window: window.id)], aspect: window.size.width / max(window.size.height, 1),
-                                          placeholder: appIcon(window.bundleID).map { Image(nsImage: $0) } ?? Image(systemName: "macwindow"),
-                                          selected: selection == .window(window.id)) {
-                                    selection = .window(window.id)
-                                } onDouble: {
-                                    selection = .window(window.id)
-                                    share()
-                                }
-                            }
-                        }
-                    }
-                    if groups.isEmpty && !search.isEmpty {
-                        Text("No windows match “\(search)”.").foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.top, 30)
-                    } else if catalog.windows.isEmpty {
-                        Text("No other windows are open. Open the window you want to share, and it appears here.")
-                            .foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.top, 10)
+                } else if catalog.denied {
+                    ScreenPermissionCard(compact: true)
+                        .padding(14)
+                        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                } else {
+                    screensSection
+                }
+                camerasSection
+                if !catalog.loading && !catalog.denied { windowSections }
+            }
+            .padding(24)
+        }
+    }
+
+    @ViewBuilder private var screensSection: some View {
+        if !shownDisplays.isEmpty {
+            section(title: shownDisplays.count > 1 ? "Screens" : "Your Screen", icon: Image(systemName: "display")) {
+                ForEach(shownDisplays) { display in
+                    ShareCard(title: display.name, subtitle: "\(Int(display.size.width)) × \(Int(display.size.height))" + (display.isMain ? " · Main" : ""),
+                              image: catalog.thumbnails[ShareCatalog.key(display: display.id)], aspect: display.size.width / max(display.size.height, 1),
+                              placeholder: Image(systemName: "display"), selected: selection == .display(display.id)) {
+                        selection = .display(display.id)
+                    } onDouble: {
+                        selection = .display(display.id)
+                        share()
                     }
                 }
-                .padding(24)
             }
+        }
+    }
+
+    /// Second cameras: not the main camera, and not Backdrop's own. No live picture, since that would turn every camera on.
+    @ViewBuilder private var camerasSection: some View {
+        let query = search.trimmingCharacters(in: .whitespaces)
+        if !shownCameras.isEmpty || query.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                section(title: "Cameras", icon: Image(systemName: "video")) {
+                    ForEach(shownCameras) { camera in
+                        ShareCard(title: camera.name, subtitle: camera.kind.label, image: nil, aspect: 16.0 / 9,
+                                  placeholder: Image(systemName: camera.kind.symbol), selected: selection == .camera(camera.id)) {
+                            selection = .camera(camera.id)
+                        } onDouble: {
+                            selection = .camera(camera.id)
+                            share()
+                        }
+                    }
+                }
+                if model.extraCameras.isEmpty {
+                    Text("No second camera found. Plug one in, or connect an iPhone as a Continuity Camera, and it appears here. Your main camera is left out.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("A camera turns on only when it is showing. Your main camera is left out.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if [.denied, .restricted].contains(AVCaptureDevice.authorizationStatus(for: .video)) {
+                    CameraPermissionCard()
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var windowSections: some View {
+        ForEach(groups, id: \.bundleID) { group in
+            section(title: group.app, icon: appIcon(group.bundleID).map { Image(nsImage: $0) } ?? Image(systemName: "app")) {
+                ForEach(group.windows) { window in
+                    ShareCard(title: window.title.isEmpty ? window.appName : window.title, subtitle: nil,
+                              image: catalog.thumbnails[ShareCatalog.key(window: window.id)], aspect: window.size.width / max(window.size.height, 1),
+                              placeholder: appIcon(window.bundleID).map { Image(nsImage: $0) } ?? Image(systemName: "macwindow"),
+                              selected: selection == .window(window.id)) {
+                        selection = .window(window.id)
+                    } onDouble: {
+                        selection = .window(window.id)
+                        share()
+                    }
+                }
+            }
+        }
+        let query = search.trimmingCharacters(in: .whitespaces)
+        if groups.isEmpty && shownCameras.isEmpty && shownDisplays.isEmpty && !query.isEmpty {
+            Text("Nothing matches “\(search)”.").foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.top, 30)
+        } else if catalog.windows.isEmpty && query.isEmpty {
+            Text("No other windows are open. Open the window you want to share, and it appears here.")
+                .foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.top, 10)
         }
     }
 
@@ -235,6 +299,8 @@ struct SharePickerSheet: View {
             if let choice = catalog.windows.first(where: { $0.id == id }) { model.addWindow(choice) }
         case .display(let id)?:
             if let choice = catalog.displays.first(where: { $0.id == id }) { model.addScreen(choice) }
+        case .camera(let id)?:
+            if let choice = model.extraCameras.first(where: { $0.id == id }) { model.addCamera(choice) }
         case nil:
             return
         }
@@ -318,5 +384,27 @@ struct ScreenPermissionCard: View {
             }
         }
         .padding(.vertical, compact ? 4 : 0)
+    }
+}
+
+/// Camera access is off, so a second camera cannot open: says so and goes to the right place in System Settings.
+struct CameraPermissionCard: View {
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "video.slash.fill").font(.system(size: 18, weight: .medium)).foregroundStyle(.orange).frame(width: 26)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Backdrop can’t use cameras yet").font(.headline)
+                Text("Turn on Backdrop under Camera in System Settings › Privacy & Security.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Open Settings") {
+                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera")!)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            }
+        }
+        .padding(.vertical, 4)
     }
 }

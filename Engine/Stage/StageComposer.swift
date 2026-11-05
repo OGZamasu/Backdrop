@@ -20,6 +20,8 @@ final class StageComposer {
     struct Inputs {
         var content: CIImage?
         var status: StageContentStatus = .live
+        /// What kind of thing is being shown, so a card says "unplugged" for a camera and "closed" for a window.
+        var kind: StageContentKind = .window
         var title: String?
         var layout: StageLayout
         var live = StageLive()
@@ -104,7 +106,7 @@ final class StageComposer {
     func fullCard(_ f: Inputs) -> CIImage? {
         rememberFrame(f)
         guard f.status == .paused || f.status == .lost || f.status == .denied else { return nil }
-        return card(f.status, size: rect.size, title: f.title)
+        return card(f.status, kind: f.kind, size: rect.size, title: f.title)
     }
 
     // MARK: Floating panel
@@ -182,7 +184,7 @@ final class StageComposer {
         if f.status == .live, let content = f.content {
             inside = scaled(content, into: box).composited(over: bezel)
         } else {
-            inside = card(f.status == .live ? .starting : f.status, size: box.size, title: f.title).composited(over: bezel)
+            inside = card(f.status == .live ? .starting : f.status, kind: f.kind, size: box.size, title: f.title).composited(over: bezel)
         }
         inside = inside.applyingFilter("CISourceInCompositing", parameters: [kCIInputBackgroundImageKey: art.mask])
         return art.rim.composited(over: inside).cropped(to: box)
@@ -356,7 +358,7 @@ final class StageComposer {
     /// The screen filling the picture, letterboxed over a blurred copy of itself as a backdrop always has been, or its card.
     private func filled(_ f: Inputs) -> CIImage {
         if f.status != .live || f.content == nil {
-            let c = card(f.status == .live ? .starting : f.status, size: rect.size, title: f.title)
+            let c = card(f.status == .live ? .starting : f.status, kind: f.kind, size: rect.size, title: f.title)
             return c.cropped(to: rect)
         }
         guard let content = f.content else { return slate() }
@@ -591,20 +593,20 @@ final class StageComposer {
 
     // MARK: Cards
 
-    private struct CardKey: Equatable { var status: StageContentStatus, w: Int, h: Int, title: String?, frozen: Int }
+    private struct CardKey: Equatable { var status: StageContentStatus, kind: StageContentKind, w: Int, h: Int, title: String?, frozen: Int }
 
     private var cardCache: [(key: CardKey, image: CIImage)] = []
     private(set) var cardBuilds = 0
 
     /// The card for a status at a size. Kept, so a paused panel costs nothing per frame.
-    func card(_ status: StageContentStatus, size: CGSize, title: String?) -> CIImage {
+    func card(_ status: StageContentStatus, kind: StageContentKind = .window, size: CGSize, title: String?) -> CIImage {
         let w = max(8, Int(size.width.rounded())), h = max(8, Int(size.height.rounded()))
-        let key = CardKey(status: status, w: w, h: h, title: status == .lost ? title : nil, frozen: status == .paused ? frozenGeneration : 0)
+        let key = CardKey(status: status, kind: kind, w: w, h: h, title: status == .lost ? title : nil, frozen: status == .paused ? frozenGeneration : 0)
         if let hit = cardCache.first(where: { $0.key == key }) { return hit.image }
         cardBuilds += 1
         var image = CIImage(color: CIColor(red: 0.08, green: 0.085, blue: 0.1)).cropped(to: CGRect(x: 0, y: 0, width: w, height: h))
         if let ctx = StageArt.bitmap(width: w, height: h) {
-            StageCards.draw(status, size: CGSize(width: w, height: h), title: title, frozen: status == .paused ? frozenSmall : nil, in: ctx)
+            StageCards.draw(status, kind: kind, size: CGSize(width: w, height: h), title: title, frozen: status == .paused ? frozenSmall : nil, in: ctx)
             if let made = ctx.makeImage() { image = CIImage(cgImage: made) }
         }
         cardCache.append((key, image))

@@ -28,6 +28,8 @@ final class FramePipeline {
     private var generation = 0
     /// Whether the current background's source is running (it is paused when the camera goes off).
     private var sourceRunning = false
+    /// Whether Backdrop's camera is on. A second camera waits for this before it opens.
+    private var running = false
     /// The timestamp of the last frame sent out. Anything older that turns up later (a slow cutout finishing after a newer
     /// frame was made without one) is thrown away rather than sent out of order.
     private var lastSentTime: CMTime?
@@ -99,6 +101,7 @@ final class FramePipeline {
         outputLock.withLock { lastOutputAt = CFAbsoluteTimeGetCurrent() }
         queue.async {
             self.lastSentTime = nil
+            self.running = true
             if !self.sourceRunning, let source = self.source {
                 source.start()
                 self.sourceRunning = true
@@ -144,8 +147,10 @@ final class FramePipeline {
                 self.sourceRunning = false
             } else {
                 (newSource as? StageContentSource)?.setPaused(self.stagePaused)
-                newSource?.start()
-                self.sourceRunning = newSource != nil
+                // A second camera opens its own camera, so with Backdrop's camera off it stays closed until `markStarted`.
+                let waits = newSource?.needsLiveCamera == true && !self.running
+                if !waits { newSource?.start() }
+                self.sourceRunning = newSource != nil && !waits
                 if let old = self.source {
                     // Dissolve from whatever was showing, even if that was itself mid-dissolve.
                     self.outgoing?.source.stop()
@@ -217,7 +222,7 @@ final class FramePipeline {
     }
 
     /// Whether this frame arranges a shared screen: a window or screen is the background and the arrangement is not plain Backdrop.
-    private var isStaging: Bool { background.isScreenShare && stageLayout.arrangement.isArranged }
+    private var isStaging: Bool { background.isStageContent && stageLayout.arrangement.isArranged }
 
     func stop() {
         queue.async {
@@ -227,6 +232,7 @@ final class FramePipeline {
             self.lastSentTime = nil
             self.source?.stop()
             self.sourceRunning = false
+            self.running = false
             self.outgoing?.source.stop()
             self.outgoing = nil
             self.stageSurroundSource?.stop()
@@ -416,7 +422,7 @@ final class FramePipeline {
         }
 
         lastOverlay = stageOverlay
-        if background.isScreenShare { reportStage(hands: hands) }
+        if background.isStageContent { reportStage(hands: hands) }
     }
 
     // MARK: Present
@@ -447,7 +453,7 @@ final class FramePipeline {
         if out.layout.surround == .backdrop, let s = stageSurroundSource, let picture = s.frame(at: now, camera: camera) {
             surround = compositor.prepareBackground(picture, fits: s.fitsContent, parallax: nil)
         }
-        let inputs = StageComposer.Inputs(content: frame, status: status, title: stageTitle, layout: out.layout, live: out.live, camera: fitted,
+        let inputs = StageComposer.Inputs(content: frame, status: status, kind: StageContentKind(background.kind), title: stageTitle, layout: out.layout, live: out.live, camera: fitted,
                                           matte: matte, surround: surround, head: head, anchor: anchor, dt: dt)
         let bg = backgroundImage(camera: camera, now: now, parallax: parallax, stage: inputs)
         let person = stageComposer.person(inputs, over: bg, compositor: compositor, params: parameters)
@@ -542,11 +548,11 @@ final class FramePipeline {
 
     /// In the plain Backdrop arrangement a paused, closed or forbidden share shows its calm card full size, never a black picture.
     private func shareCard(frame: CIImage?, camera: CIImage) -> CIImage? {
-        guard background.isScreenShare else { return nil }
+        guard background.isStageContent else { return nil }
         let status = shareStatus(frame: frame)
         frameShareStatus = status
         guard status == .paused || status == .lost || status == .denied else { return nil }
-        let inputs = StageComposer.Inputs(content: frame, status: status, title: stageTitle, layout: stageLayout, camera: camera)
+        let inputs = StageComposer.Inputs(content: frame, status: status, kind: StageContentKind(background.kind), title: stageTitle, layout: stageLayout, camera: camera)
         return stageComposer.fullCard(inputs)
     }
 }

@@ -146,7 +146,7 @@ struct BackgroundsTab: View {
             PaneHeader(title: "Backgrounds") {
                 Menu {
                     Button("Image or Video…", systemImage: "photo") { showingImporter = true }
-                    Button("Window or Screen…", systemImage: "macwindow") { share() }
+                    Button("Window, Screen or Camera…", systemImage: "macwindow") { share() }
                     Divider()
                     Button("Generate with AI…", systemImage: "wand.and.stars") { showingGenerator = true }
                 } label: {
@@ -256,6 +256,7 @@ private struct Inspector: View {
         case .video: return "A looping video."
         case .window: return "A live window. Arrange it in Present."
         case .display, .screen: return "Your screen. Arrange it in Present."
+        case .camera: return "A second camera. Arrange it in Present."
         }
     }
 }

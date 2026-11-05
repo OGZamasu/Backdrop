@@ -98,7 +98,7 @@ final class BackgroundCatalogTests: XCTestCase {
             case .gradient, .pipes, .maze: XCTAssertTrue(background.isLive, background.name)
             case .procedural(let style): XCTAssertEqual(background.isLive, style.isAnimated, "\(background.name): stills are painted once, scenes that move are live")
             case .passthrough, .blur, .solid, .treated: XCTAssertFalse(background.isLive, background.name)
-            case .image, .video, .window, .display, .screen: XCTFail("\(background.name): no built-in should be a file or a window")
+            case .image, .video, .window, .display, .screen, .camera: XCTFail("\(background.name): no built-in should be a file, a window or a camera")
             }
         }
         XCTAssertEqual(ProceduralStyle.allCases.count, Background.builtIns.filter { if case .procedural = $0.kind { return true } else { return false } }.count,

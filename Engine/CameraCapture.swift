@@ -29,6 +29,9 @@ final class CameraCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     var onStatus: ((Status) -> Void)?
 
     private let queue: DispatchQueue
+    /// A strict capture only ever uses the camera it was asked for. The main one falls back to the first camera it can find, which is
+    /// right for the camera you chose last week and unplugged; a second camera must never quietly turn into some other camera.
+    private let strict: Bool
     private let sessionQueue = DispatchQueue(label: "app.backdrop.camera-session")
     private let session = AVCaptureSession()
     private let output = AVCaptureVideoDataOutput()
@@ -45,8 +48,9 @@ final class CameraCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     private var timer: DispatchSourceTimer?
     private var observers: [NSObjectProtocol] = []
 
-    init(queue: DispatchQueue) {
+    init(queue: DispatchQueue, strict: Bool = false) {
         self.queue = queue
+        self.strict = strict
         super.init()
         observeSession()
     }
@@ -156,7 +160,8 @@ final class CameraCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     // MARK: Setup
 
     private func configure(deviceID: String?) throws {
-        guard let device = deviceID.flatMap({ AVCaptureDevice(uniqueID: $0) }) ?? Self.availableDevices().first else {
+        let asked = deviceID.flatMap { AVCaptureDevice(uniqueID: $0) }
+        guard let device = asked ?? (strict ? nil : Self.availableDevices().first) else {
             throw CameraError.noCamera
         }
         let input: AVCaptureDeviceInput

@@ -66,6 +66,9 @@ struct BackgroundThumbnail: View {
             case .display, .screen:
                 Color(white: 0.16)
                 Image(systemName: "display").font(.title2).foregroundStyle(.secondary)
+            case .camera:
+                Color(white: 0.16)
+                Image(systemName: "video.fill").font(.title2).foregroundStyle(.secondary)
             }
         }
         .task(id: background.id) {
@@ -237,6 +240,7 @@ struct BackgroundTile: View {
             switch background.kind {
             case .video: return "play.fill"
             case .window, .display, .screen: return "dot.radiowaves.left.and.right"
+            case .camera: return "video.fill"
             case .gradient: return "sparkle"
             case .procedural(let style): return style.isAnimated ? "sparkle" : nil
             default: return background.origin == .generated ? "wand.and.stars" : nil

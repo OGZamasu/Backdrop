@@ -202,7 +202,8 @@ final class StageRig {
     var visionSized = false
     private lazy var empty = SyntheticScene.emptyMatte()
 
-    init(content: StageFixtures.Content? = .slide, layout: StageLayout, paused: Bool = false, title: String? = "Keynote – Q3 Roadmap") {
+    init(content: StageFixtures.Content? = .slide, layout: StageLayout, paused: Bool = false, title: String? = "Keynote – Q3 Roadmap",
+         kind: BackgroundKind = .display) {
         source = FakeShareSource(content)
         pipeline.matteOverride = { [unowned self] _ in self.withPerson ? self.matte : self.empty }
         pipeline.matteResponsiveness = 1
@@ -212,7 +213,7 @@ final class StageRig {
         pipeline.onStageLayoutChanged = { [unowned self] l in self.layouts.append(l) }
         pipeline.onStageReport = { [unowned self] r in self.reports.append(r) }
         pipeline.setPreviewEnabled(true)
-        pipeline.setBackground(Background(id: UUID(), name: "Share", kind: .display, origin: .imported), source: source)
+        pipeline.setBackground(Background(id: UUID(), name: "Share", kind: kind, origin: .imported), source: source)
         pipeline.setStage(layout, paused: paused, title: title)
         pipeline.queue.sync {}
     }

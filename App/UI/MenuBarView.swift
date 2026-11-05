@@ -35,7 +35,7 @@ struct MenuBarView: View {
                     Menu {
                         Button("Generate with AI…", systemImage: "wand.and.stars") { openStudio(request: .generate) }
                         Button("Image or Video…", systemImage: "photo") { openStudio(request: .importFile) }
-                        Button("Window or Screen…", systemImage: "macwindow") { openStudio(request: .share) }
+                        Button("Window, Screen or Camera…", systemImage: "macwindow") { openStudio(request: .share) }
                         if NSScreen.screens.count <= 1 {
                             Button("Share My Screen", systemImage: "display") { model.addScreen() }
                         }
@@ -48,7 +48,7 @@ struct MenuBarView: View {
                 BackgroundPicker(contentWidth: Self.width - Self.padding * 2)
             }
 
-            if model.isSharingScreen {
+            if model.isPresenting {
                 PresentQuickControls { openStudio(pane: .present) }
             }
 

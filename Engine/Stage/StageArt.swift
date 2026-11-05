@@ -174,15 +174,31 @@ enum StageArt {
         }
     }
 
+    /// Clips to everything except a band along the line `from` to `to`, so a slash drawn along it has a clean gap either side where the
+    /// outline stops. Erasing the gap instead would leave transparent pixels, which show up black on the card.
+    private static func clipOutBand(from: CGPoint, to: CGPoint, width: CGFloat, in ctx: CGContext) {
+        let line = CGMutablePath()
+        line.move(to: from)
+        line.addLine(to: to)
+        let band = line.copy(strokingWithWidth: width, lineCap: .round, lineJoin: .round, miterLimit: 10)
+        ctx.addRect(ctx.boundingBoxOfClipPath.insetBy(dx: -4, dy: -4))
+        ctx.addPath(band)
+        ctx.clip(using: .evenOdd)
+    }
+
     /// A window outline with a line through it.
     static func lostWindowGlyph(at c: CGPoint, width w: CGFloat, in ctx: CGContext, color: CGColor) {
         let h = w * 0.72
         let r = CGRect(x: c.x - w / 2, y: c.y - h / 2, width: w, height: h)
         let line = max(1.5, w * 0.06)
+        let from = CGPoint(x: r.minX - w * 0.04, y: r.maxY + h * 0.08), to = CGPoint(x: r.maxX + w * 0.04, y: r.minY - h * 0.08)
         ctx.saveGState()
         ctx.setStrokeColor(color)
         ctx.setLineWidth(line)
         ctx.setLineCap(.round)
+        // The outline stops short of the slash on both sides.
+        ctx.saveGState()
+        clipOutBand(from: from, to: to, width: line * 3, in: ctx)
         ctx.addPath(continuousRect(r, radius: w * 0.12))
         ctx.strokePath()
         // The title bar.
@@ -194,21 +210,43 @@ enum StageArt {
             let d = w * 0.06
             ctx.fillEllipse(in: CGRect(x: r.minX + w * 0.09 + CGFloat(k) * d * 1.7, y: r.maxY - h * 0.12 - d / 2, width: d, height: d))
         }
-        // The slash, with a gap cut either side of it so it reads against the outline.
-        ctx.setBlendMode(.clear)
-        ctx.setLineWidth(line * 3)
-        ctx.move(to: CGPoint(x: r.minX - w * 0.04, y: r.maxY + h * 0.08))
-        ctx.addLine(to: CGPoint(x: r.maxX + w * 0.04, y: r.minY - h * 0.08))
-        ctx.strokePath()
-        ctx.setBlendMode(.normal)
-        ctx.setLineWidth(line)
-        ctx.move(to: CGPoint(x: r.minX - w * 0.04, y: r.maxY + h * 0.08))
-        ctx.addLine(to: CGPoint(x: r.maxX + w * 0.04, y: r.minY - h * 0.08))
+        ctx.restoreGState()
+        ctx.move(to: from)
+        ctx.addLine(to: to)
         ctx.strokePath()
         ctx.restoreGState()
     }
 
-    /// A screen with a lock-like eye closed: Screen Recording is not allowed.
+    /// A camera with a slash through it: the second camera was unplugged.
+    static func lostCameraGlyph(at c: CGPoint, width w: CGFloat, in ctx: CGContext, color: CGColor) {
+        let h = w * 0.66
+        let body = CGRect(x: c.x - w / 2, y: c.y - h / 2, width: w * 0.78, height: h)
+        let line = max(1.5, w * 0.06)
+        let from = CGPoint(x: c.x - w * 0.58, y: c.y + h * 0.66), to = CGPoint(x: c.x + w * 0.58, y: c.y - h * 0.66)
+        ctx.saveGState()
+        ctx.setStrokeColor(color)
+        ctx.setLineWidth(line)
+        ctx.setLineCap(.round)
+        ctx.setLineJoin(.round)
+        ctx.saveGState()
+        clipOutBand(from: from, to: to, width: line * 3, in: ctx)
+        ctx.addPath(continuousRect(body, radius: w * 0.13))
+        ctx.strokePath()
+        // The lens.
+        ctx.strokeEllipse(in: CGRect(x: body.midX - h * 0.24, y: body.midY - h * 0.24, width: h * 0.48, height: h * 0.48))
+        // The body narrows to a lens hood on the right.
+        ctx.move(to: CGPoint(x: body.maxX + line, y: body.midY + h * 0.14))
+        ctx.addLine(to: CGPoint(x: c.x + w / 2, y: body.midY + h * 0.26))
+        ctx.addLine(to: CGPoint(x: c.x + w / 2, y: body.midY - h * 0.26))
+        ctx.addLine(to: CGPoint(x: body.maxX + line, y: body.midY - h * 0.14))
+        ctx.strokePath()
+        ctx.restoreGState()
+        ctx.move(to: from)
+        ctx.addLine(to: to)
+        ctx.strokePath()
+        ctx.restoreGState()
+    }
+
     static func blockedGlyph(at c: CGPoint, width w: CGFloat, in ctx: CGContext, color: CGColor) {
         let h = w * 0.64
         let r = CGRect(x: c.x - w / 2, y: c.y - h / 2 + w * 0.06, width: w, height: h)
@@ -252,11 +290,24 @@ enum StageContentStatus: Equatable {
     case denied
 }
 
+/// What is being shown, so the cards can say the right words: a window closes, a camera is unplugged.
+enum StageContentKind: Equatable {
+    case window, screen, camera
+
+    init(_ kind: BackgroundKind) {
+        switch kind {
+        case .camera: self = .camera
+        case .display, .screen: self = .screen
+        default: self = .window
+        }
+    }
+}
+
 /// The calm cards shown in place of the screen when it is paused, gone, or not allowed. Viewers see these, so they say what is
 /// happening in a few plain words and never show anything of the screen itself beyond a heavy blur of its colours.
 enum StageCards {
     /// Draws the card for `status` filling `size`. `frozen` is a blurred picture of the screen as it was, for the paused card.
-    static func draw(_ status: StageContentStatus, size: CGSize, title: String?, frozen: CGImage?, in ctx: CGContext) {
+    static func draw(_ status: StageContentStatus, kind: StageContentKind = .window, size: CGSize, title: String?, frozen: CGImage?, in ctx: CGContext) {
         let rect = CGRect(origin: .zero, size: size)
         let h = size.height
         let colors = [StageArt.color(StageArt.slateTop), StageArt.color(StageArt.slateBottom)] as CFArray
@@ -298,7 +349,11 @@ enum StageCards {
             ctx.strokeEllipse(in: CGRect(x: glyphCenter.x - r, y: glyphCenter.y - r, width: r * 2, height: r * 2).insetBy(dx: 0.5, dy: 0.5))
             StageArt.pauseGlyph(at: glyphCenter, height: r * 0.78, in: ctx, color: ink)
         case .lost:
-            StageArt.lostWindowGlyph(at: glyphCenter, width: unit * 0.2, in: ctx, color: StageArt.white(0.78))
+            if kind == .camera {
+                StageArt.lostCameraGlyph(at: glyphCenter, width: unit * 0.2, in: ctx, color: StageArt.white(0.78))
+            } else {
+                StageArt.lostWindowGlyph(at: glyphCenter, width: unit * 0.2, in: ctx, color: StageArt.white(0.78))
+            }
         case .denied:
             StageArt.blockedGlyph(at: glyphCenter, width: unit * 0.2, in: ctx, color: StageArt.white(0.78))
         case .starting:
@@ -315,7 +370,10 @@ enum StageCards {
         let words: (String, String?) = {
             switch status {
             case .paused: return ("Paused", "Back in a moment")
+            case .lost where kind == .camera:
+                return (title.map { "\($0) disconnected" } ?? "Camera disconnected", "It will appear here again when it’s plugged in")
             case .lost: return (title.map { "\($0) closed" } ?? "The window closed", "It will appear here again when it’s open")
+            case .denied where kind == .camera: return ("Camera is off", "Allow Backdrop under Camera in System Settings")
             case .denied: return ("Screen sharing is off", "Allow Backdrop under Screen Recording in System Settings")
             case .starting: return ("Starting…", nil)
             case .live: return ("", nil)
