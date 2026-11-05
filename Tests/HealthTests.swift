@@ -1,5 +1,55 @@
 import XCTest
 
+final class CameraLifecycleTests: XCTestCase {
+    func testSleepSuspendsCaptureAndWakeResumesOnlyWhenWanted() {
+        var lifecycle = CameraLifecycle()
+        XCTAssertFalse(lifecycle.canRun)
+        lifecycle.wantsRunning = true
+        XCTAssertTrue(lifecycle.canRun)
+        lifecycle.isSleeping = true
+        XCTAssertFalse(lifecycle.canRun)
+        lifecycle.isSleeping = true // A repeated notification must not re-enable capture.
+        XCTAssertFalse(lifecycle.canRun)
+        lifecycle.isSleeping = false
+        XCTAssertTrue(lifecycle.canRun)
+        lifecycle.isSleeping = false
+        XCTAssertTrue(lifecycle.canRun)
+    }
+
+    func testStoppingDuringSleepPreventsRestartOnWake() {
+        var lifecycle = CameraLifecycle()
+        lifecycle.wantsRunning = true
+        lifecycle.isSleeping = true
+        lifecycle.wantsRunning = false
+        lifecycle.isSleeping = false
+        XCTAssertFalse(lifecycle.canRun)
+    }
+
+    func testLifecycleGateBlocksRunIntentWhileAsleepUntilWake() {
+        var lifecycle = CameraLifecycle()
+        lifecycle.isSleeping = true
+        lifecycle.wantsRunning = true
+        XCTAssertFalse(lifecycle.canRun)
+        lifecycle.isSleeping = false
+        XCTAssertTrue(lifecycle.canRun)
+    }
+
+    func testInterruptionAndSleepBothHaveToEndBeforeCaptureCanResume() {
+        var lifecycle = CameraLifecycle()
+        lifecycle.wantsRunning = true
+        lifecycle.isInterrupted = true
+        XCTAssertFalse(lifecycle.canRun)
+        lifecycle.isSleeping = true
+        lifecycle.isInterrupted = false
+        XCTAssertFalse(lifecycle.canRun, "ending an interruption while asleep must not restart the camera")
+        lifecycle.isInterrupted = true
+        lifecycle.isSleeping = false
+        XCTAssertFalse(lifecycle.canRun, "waking while still interrupted must not restart the camera")
+        lifecycle.isInterrupted = false
+        XCTAssertTrue(lifecycle.canRun)
+    }
+}
+
 final class StallWatchdogTests: XCTestCase {
     func testAQuietCameraIsRestartedOnlyOnceItPassesTheLimit() {
         var watchdog = StallWatchdog()
@@ -32,6 +82,20 @@ final class StallWatchdogTests: XCTestCase {
         var watchdog = StallWatchdog()
         XCTAssertTrue(watchdog.shouldRestart(now: 10, lastFrame: 0, sessionRunning: true))
         XCTAssertFalse(watchdog.shouldRestart(now: 15, lastFrame: 14.97, sessionRunning: true))
+    }
+
+    func testFreshFrameBaselineAfterWakeAllowsTimeForFramesToReturn() {
+        var watchdog = StallWatchdog()
+        let wakeTime = 100_000.0
+        XCTAssertFalse(watchdog.shouldRestart(now: wakeTime + 1.9, lastFrame: wakeTime, sessionRunning: true))
+        XCTAssertTrue(watchdog.shouldRestart(now: wakeTime + 2.1, lastFrame: wakeTime, sessionRunning: true))
+    }
+
+    func testNewWatchdogClearsRetryThrottleAfterResume() {
+        var watchdog = StallWatchdog()
+        XCTAssertTrue(watchdog.shouldRestart(now: 10, lastFrame: 0, sessionRunning: true))
+        watchdog = StallWatchdog()
+        XCTAssertTrue(watchdog.shouldRestart(now: 11, lastFrame: 10.9, sessionRunning: false))
     }
 }
 

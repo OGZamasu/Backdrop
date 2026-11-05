@@ -1,6 +1,15 @@
 import Foundation
 import os
 
+/// Capture intent survives sleep and interruptions, but no recovery may run during either.
+struct CameraLifecycle {
+    var wantsRunning = false
+    var isSleeping = false
+    var isInterrupted = false
+
+    var canRun: Bool { wantsRunning && !isSleeping && !isInterrupted }
+}
+
 /// Decides when a camera that has gone quiet should be restarted, and not more often than is useful.
 struct StallWatchdog {
     /// How long without a frame counts as stalled.
