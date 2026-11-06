@@ -78,19 +78,29 @@ final class StageComposer {
         }
     }
 
-    /// You over `backdrop`: your cutout, moved and scaled when the layout says so, or a camera bubble. Returns the finished picture
-    /// and the camera and cutout as they now sit, so a lens on top lines up with you.
-    func person(_ f: Inputs, over backdrop: CIImage, compositor: Compositor, params: CompositeParameters) -> (composed: CIImage, camera: CIImage, matte: CIImage?) {
+    /// You as Present put you in the picture.
+    struct Placed {
+        var composed: CIImage
+        /// The camera and your cutout as they now sit, so a lens on top lines up with you.
+        var camera: CIImage
+        var matte: CIImage?
+        /// What takes a point on the camera picture to where it now sits, or nil when you have not been moved. Your face and hands are
+        /// read on the camera picture, so a lens is given them through this, or it would dress the place you used to be.
+        var transform: CGAffineTransform?
+        /// The picture behind you when that is more than the backdrop: a bubble's own room and ring. Nil when it is the backdrop.
+        var backdrop: CIImage?
+    }
+
+    /// You over `backdrop`: your cutout, moved and scaled when the layout says so, or a camera bubble.
+    func person(_ f: Inputs, over backdrop: CIImage, compositor: Compositor, params: CompositeParameters) -> Placed {
         let layout = f.layout
-        if layout.showsBubble {
-            return (bubble(f, over: backdrop), f.camera, f.matte)
-        }
-        guard let matte = f.matte else { return (backdrop, f.camera, nil) }
+        if layout.showsBubble { return bubble(f, over: backdrop) }
+        guard let matte = f.matte else { return Placed(composed: backdrop, camera: f.camera, matte: nil) }
         let frame = layout.presenter
         if StageGeometry.isIdentity(frame) {
             var base = backdrop
             if layout.arrangement == .presenter { base = dropShadow(of: matte, onto: base) }
-            return (compositor.compositeSubject(f.camera, matte: matte, background: base, params: params), f.camera, matte)
+            return Placed(composed: compositor.compositeSubject(f.camera, matte: matte, background: base, params: params), camera: f.camera, matte: matte)
         }
         let t = StageGeometry.presenterTransform(frame, in: rect.size)
         let movedCamera = f.camera.transformed(by: t)
@@ -98,7 +108,7 @@ final class StageComposer {
         var base = backdrop
         if layout.arrangement == .presenter { base = dropShadow(of: movedMatte, onto: base) }
         let composed = compositor.compositeSubject(movedCamera, matte: movedMatte, background: base, params: params)
-        return (composed, movedCamera.cropped(to: rect), movedMatte)
+        return Placed(composed: composed, camera: movedCamera.cropped(to: rect), matte: movedMatte, transform: t)
     }
 
     /// A full-picture card for the Backdrop arrangement when the screen is paused, gone or not allowed; nil while it is live or
@@ -371,7 +381,9 @@ final class StageComposer {
 
     private var framing: CGPoint?
 
-    private func bubble(_ f: Inputs, over backdrop: CIImage) -> CIImage {
+    /// You in a bubble. The camera, cutout, face and hands a lens is given are moved into the bubble too and stop at its edge, and the
+    /// picture behind you holds the bubble's room and ring with nobody in it, so a lens that lays you back over it keeps the bubble.
+    private func bubble(_ f: Inputs, over backdrop: CIImage) -> Placed {
         let layout = f.layout
         let square = StageGeometry.bubbleRect(layout.presenter, in: rect.size)
         let grow = CGFloat(0.02 * f.live.presenterLift)
@@ -389,25 +401,36 @@ final class StageComposer {
         let cy = min(rect.maxY - crop / 2, max(rect.minY + crop / 2, current.y))
         let source = CGRect(x: cx - crop / 2, y: cy - crop / 2, width: crop, height: crop)
 
-        // You over your room softly out of focus, like a portrait lens.
-        var you = f.camera
-        if let matte = f.matte, let room = BackdropLens.blurred(f.camera, sigma: 9, bokeh: 0.35) {
-            you = WorldKit.place(person: f.camera, over: room, matte: matte, rect: rect)
-        }
+        // Where a point on the camera picture lands in the bubble.
         let s = shown.width / source.width
-        let placed = you.cropped(to: source)
-            .transformed(by: CGAffineTransform(translationX: -source.minX, y: -source.minY)
-                .concatenating(CGAffineTransform(scaleX: s, y: s))
-                .concatenating(CGAffineTransform(translationX: shown.minX, y: shown.minY)))
+        let t = CGAffineTransform(translationX: -source.minX, y: -source.minY)
+            .concatenating(CGAffineTransform(scaleX: s, y: s))
+            .concatenating(CGAffineTransform(translationX: shown.minX, y: shown.minY))
         let place = CGAffineTransform(scaleX: shown.width / CGFloat(side), y: shown.height / CGFloat(side))
             .concatenating(CGAffineTransform(translationX: shown.minX, y: shown.minY))
         let mask = art.mask.transformed(by: place)
-        let face = placed.applyingFilter("CISourceInCompositing", parameters: [kCIInputBackgroundImageKey: mask])
         let lift = f.live.presenterLift
         let shadow = art.shadow.transformed(by: place)
             .transformed(by: CGAffineTransform(translationX: 0, y: -CGFloat(lift) * shown.height * 0.03))
             .applyingFilter("CIColorMatrix", parameters: ["inputAVector": CIVector(x: 0, y: 0, z: 0, w: CGFloat(1 + 0.4 * lift))])
-        return art.ring.transformed(by: place).composited(over: face.composited(over: shadow.composited(over: backdrop))).cropped(to: rect)
+        let ring = art.ring.transformed(by: place)
+
+        /// The bubble holding `picture`, over the stage.
+        func framed(_ picture: CIImage) -> CIImage {
+            let inside = picture.cropped(to: source).transformed(by: t).applyingFilter("CISourceInCompositing", parameters: [kCIInputBackgroundImageKey: mask])
+            return ring.composited(over: inside.composited(over: shadow.composited(over: backdrop))).cropped(to: rect)
+        }
+
+        // You over your room softly out of focus, like a portrait lens.
+        guard let matte = f.matte, let room = BackdropLens.blurred(f.camera, sigma: 9, bokeh: 0.35) else {
+            return Placed(composed: framed(f.camera), camera: f.camera, matte: f.matte, transform: t)
+        }
+        let you = WorldKit.place(person: f.camera, over: room, matte: matte, rect: rect)
+        // What a lens is given stops at the bubble's edge: nothing outside it is shown, so none of it is you.
+        func inBubble(_ image: CIImage) -> CIImage {
+            image.transformed(by: t).applyingFilter("CISourceInCompositing", parameters: [kCIInputBackgroundImageKey: mask]).cropped(to: rect)
+        }
+        return Placed(composed: framed(you), camera: inBubble(f.camera), matte: inBubble(matte), transform: t, backdrop: framed(room))
     }
 
     // MARK: Cached art

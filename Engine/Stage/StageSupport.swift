@@ -58,6 +58,21 @@ struct StageReport: Equatable {
     var trackingIdle: Bool
 }
 
+extension FaceState {
+    /// The same face moved by a transform that only moves and scales (what Present does to you): points moved, lengths scaled. What
+    /// the face is doing (mouth, brows, blink, smile) is measured against the face itself, so it is the same wherever the face is.
+    func transformed(by t: CGAffineTransform) -> FaceState {
+        var out = self
+        out.leftEye = leftEye.applying(t)
+        out.rightEye = rightEye.applying(t)
+        out.mouth = mouth.applying(t)
+        out.browCenter = browCenter.applying(t)
+        out.mouthWidth = mouthWidth * Double(hypot(t.a, t.c))
+        out.rect = rect.applying(t)
+        return out
+    }
+}
+
 extension HandState {
     /// The same hand moved by an affine transform: joints moved, speeds scaled.
     func transformed(by t: CGAffineTransform) -> HandState {

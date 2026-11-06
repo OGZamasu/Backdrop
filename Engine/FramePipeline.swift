@@ -308,7 +308,7 @@ final class FramePipeline {
         // What a lens is handed as the camera and cutout: you as you now sit, which Present may have moved or scaled.
         var lensCamera = fitted
         var lensMatte: CIImage?
-        var handTransform: CGAffineTransform?
+        var personTransform: CGAffineTransform?
 
         showingPlaceholder = false
         var passthrough = false
@@ -357,7 +357,7 @@ final class FramePipeline {
                         composed = made.composed
                         lensCamera = made.camera
                         lensMatte = made.matte
-                        handTransform = made.handTransform
+                        personTransform = made.transform
                     } else {
                         let bg = backgroundImage(camera: cameraImage, now: now, parallax: parallax)
                         backdrop = bg
@@ -380,8 +380,9 @@ final class FramePipeline {
                     face = faceSmoother.update(faceTracker.latest().flatMap(FaceFeatureExtractor.measure), dt: dt)
                 }
             }
-            // Hands are read on the camera picture; when Present has moved you, the lens gets them where you now are.
-            let lensHands = lensWantsHands ? (handTransform.map { t in hands.map { $0.transformed(by: t) } } ?? hands) : []
+            // Your face and hands are read on the camera picture; when Present has moved or scaled you, the lens gets them where you now are.
+            if let personTransform { face = face?.transformed(by: personTransform) }
+            let lensHands = lensWantsHands ? (personTransform.map { t in hands.map { $0.transformed(by: t) } } ?? hands) : []
             var grid: MatteGrid?
             if lens.wantsMatteGrid, let lensMatte {
                 matteGrid.update(from: lensMatte, rect: compositor.rect, context: compositor.context)
@@ -429,7 +430,7 @@ final class FramePipeline {
 
     /// Builds the picture for an arranged share: moves things by hand and mouse, draws the stage, and puts you on it.
     private func stage(camera: CIImage, fitted: CIImage, matte: CIImage, hands: [HandState], dt: Double, now: CFTimeInterval, parallax: CGPoint?)
-        -> (backdrop: CIImage, composed: CIImage, camera: CIImage, matte: CIImage?, handTransform: CGAffineTransform?) {
+        -> (backdrop: CIImage, composed: CIImage, camera: CIImage, matte: CIImage?, transform: CGAffineTransform?) {
         // Where you are: the middle of your cutout in output pixels, and how far that is from the middle of the picture.
         let c = smoother.centroid
         let e = camera.extent
@@ -457,11 +458,7 @@ final class FramePipeline {
                                           matte: matte, surround: surround, head: head, anchor: anchor, dt: dt)
         let bg = backgroundImage(camera: camera, now: now, parallax: parallax, stage: inputs)
         let person = stageComposer.person(inputs, over: bg, compositor: compositor, params: parameters)
-        var transform: CGAffineTransform?
-        if !out.layout.showsBubble, !StageGeometry.isIdentity(out.layout.presenter) {
-            transform = StageGeometry.presenterTransform(out.layout.presenter, in: compositor.rect.size)
-        }
-        return (bg, person.composed, person.camera, person.matte, transform)
+        return (person.backdrop ?? bg, person.composed, person.camera, person.matte, person.transform)
     }
 
     /// What the share is doing: paused by you, or whatever the capture says.
