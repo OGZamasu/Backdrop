@@ -6,6 +6,7 @@ import SwiftUI
 /// What can be shared right now, with small live pictures of each, refreshed every few seconds while the picker is open.
 @MainActor
 final class ShareCatalog: ObservableObject {
+    /// The windows on this desktop, and those full-screen windows on other desktops that a picture could be had of.
     @Published private(set) var windows: [WindowChoice] = []
     @Published private(set) var displays: [DisplayChoice] = []
     /// Keyed by `key(window:)` and `key(display:)`.
@@ -14,6 +15,8 @@ final class ShareCatalog: ObservableObject {
     /// macOS has not let Backdrop see the screen.
     @Published private(set) var denied = false
     private var content: SCShareableContent?
+    /// Full-screen windows on other desktops, until a picture of one shows it can be shared (a hidden or minimised window gives none).
+    private var unchecked: [WindowChoice] = []
     private var refresher: Task<Void, Never>?
 
     static func key(window id: CGWindowID) -> String { "w\(id)" }
@@ -22,13 +25,17 @@ final class ShareCatalog: ObservableObject {
     /// Looks for windows and screens. The first time ever, this is what makes macOS ask for Screen Recording.
     func load() async {
         do {
-            let found = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
+            // Other desktops too, for the apps that have gone full screen.
+            let found = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: false)
+            let all = AppModel.windows(in: found)
             content = found
-            windows = AppModel.windows(in: found)
+            windows = all.filter { !$0.onAnotherDesktop }
+            unchecked = all.filter(\.onAnotherDesktop)
             denied = false
         } catch {
             content = nil
             windows = []
+            unchecked = []
             denied = !CGPreflightScreenCaptureAccess()
         }
         displays = AppModel.displays()
@@ -60,8 +67,27 @@ final class ShareCatalog: ObservableObject {
             }
         }
         let wanted = Set(windows.map(\.id))
-        for window in content.windows where wanted.contains(window.windowID) {
+        let elsewhere = Set(windows.filter(\.onAnotherDesktop).map(\.id) + unchecked.map(\.id))
+        for window in content.windows where wanted.contains(window.windowID) || elsewhere.contains(window.windowID) {
             guard !Task.isCancelled else { return }
+            if elsewhere.contains(window.windowID) {
+                // ScreenCaptureKit's screenshot refuses a window on another desktop, so take a frame from a short stream. Getting one is
+                // also what shows the window can be shared at all.
+                let image = await WindowSnapshot.capture(window)
+                if let image {
+                    thumbnails[Self.key(window: window.windowID)] = NSImage(cgImage: image, size: NSSize(width: image.width / 2, height: image.height / 2))
+                    if let choice = unchecked.first(where: { $0.id == window.windowID }) {
+                        unchecked.removeAll { $0.id == choice.id }
+                        windows = AppModel.ordered(windows + [choice])
+                    }
+                } else if windows.contains(where: { $0.id == window.windowID }) {
+                    // It was showing and now it is gone or hidden.
+                    windows.removeAll { $0.id == window.windowID }
+                } else {
+                    unchecked.removeAll { $0.id == window.windowID }
+                }
+                continue
+            }
             let filter = SCContentFilter(desktopIndependentWindow: window)
             if let image = await Self.capture(filter, size: window.frame.size) {
                 thumbnails[Self.key(window: window.windowID)] = image
@@ -258,7 +284,7 @@ struct SharePickerSheet: View {
         ForEach(groups, id: \.bundleID) { group in
             section(title: group.app, icon: appIcon(group.bundleID).map { Image(nsImage: $0) } ?? Image(systemName: "app")) {
                 ForEach(group.windows) { window in
-                    ShareCard(title: window.title.isEmpty ? window.appName : window.title, subtitle: nil,
+                    ShareCard(title: window.title.isEmpty ? window.appName : window.title, subtitle: window.onAnotherDesktop ? "On another desktop" : nil,
                               image: catalog.thumbnails[ShareCatalog.key(window: window.id)], aspect: window.size.width / max(window.size.height, 1),
                               placeholder: appIcon(window.bundleID).map { Image(nsImage: $0) } ?? Image(systemName: "macwindow"),
                               selected: selection == .window(window.id)) {

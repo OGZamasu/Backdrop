@@ -61,6 +61,8 @@ Presets (Left, Right, Centre, Corner Bubble, Side by Side) set things up in one 
 
 **Pausing.** ⌃⌥P (or Pause Sharing) swaps the screen for a calm "Paused" card, from any app; press it again to resume. A closed window shows a "closed" card, never a black rectangle, and comes back by itself when it is opened again. While your screen is going out, the menu bar icon and the Studio's sidebar show a red dot.
 
+**Full-screen apps.** An app that goes full screen moves to a desktop of its own, so from the desktop Backdrop is on it is out of view. The picker still lists it (marked "On another desktop", with a live picture), the capture keeps going while you switch between desktops, and it finds the window again if the capture restarts. Other windows on other desktops are not offered, since from here they cannot be told from hidden or minimised ones; switch to their desktop and they appear.
+
 ## Requirements
 
 - macOS 15.1 or later (developed on macOS 27), Apple silicon.
@@ -178,6 +180,7 @@ It uses the Apple ID Xcode is signed in to (no certificate to export, no passwor
 - A second camera was built and tested without a second camera: the capture is the same code as the main camera's, but plugging one in, taking it away mid-call, an iPhone as a Continuity Camera and two cameras on one USB hub have not been tried with real hardware. Only one second camera can be shown at a time, it is shown as it arrives (a phone held upright gives a tall picture; there is no rotate or mirror option), and it is capped at 720p.
 - The preview is not a mirror while a screen is arranged (so the screen reads correctly). A mirrored preview with a readable panel is not done yet. The plain Backdrop arrangement still mirrors, as before.
 - How ScreenCaptureKit reports a resized window's area inside its frames (`contentRect`) was handled defensively but only checked against made-up values; a window being resized or changing shape is eased on screen, but has not been tried against a real capture in tests.
+- Full-screen apps were tried with a throwaway test window (sent full screen, then the view moved to another desktop), not with real apps such as slideshows, browsers and video players. An app that opens a separate window for its full-screen mode (a slideshow, say) is found again by its title or as the app's full-screen window, which is a guess that has not been tried on one. The part of a full-screen window above the top of the screen (where its title bar slides in) is part of the window, so it may show as a thin strip at the top of the shared picture.
 - The camera extension and the app-to-extension handoff have no automated tests: they need a signed install and camera permission.
   The engine (cutout, compositing, sources, rules, 3D Pipes) is covered by the tests above.
 

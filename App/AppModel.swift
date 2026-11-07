@@ -12,6 +12,8 @@ struct WindowChoice: Identifiable, Hashable {
     let title: String
     /// The window's size in points, for its thumbnail's shape.
     var size: CGSize = CGSize(width: 16, height: 10)
+    /// On a desktop other than the one in front: an app that has gone full screen is on one of its own.
+    var onAnotherDesktop = false
 }
 
 /// A screen that can be shared.
@@ -466,16 +468,19 @@ final class AppModel: ObservableObject {
         if wasSelected { select(Background.off.id) }
     }
 
-    /// The windows that can be shared, from a look at what is on screen (see `ShareCatalog`).
+    /// The windows that can be shared: those on this desktop, and full-screen ones on other desktops (see `WindowFinder.listable` and
+    /// `ShareCatalog`).
     nonisolated static func windows(in content: SCShareableContent) -> [WindowChoice] {
-        let me = Bundle.main.bundleIdentifier
-        return content.windows.compactMap { window in
-            guard let app = window.owningApplication, app.bundleIdentifier != me,
-                  window.windowLayer == 0, window.frame.width > 200, window.frame.height > 150 else { return nil }
-            return WindowChoice(id: window.windowID, bundleID: app.bundleIdentifier, appName: app.applicationName, title: window.title ?? "",
-                                size: window.frame.size)
-        }
-        .sorted { ($0.appName.localizedLowercase, $0.title) < ($1.appName.localizedLowercase, $1.title) }
+        let facts = content.windows.compactMap(WindowFacts.init)
+        let listed = WindowFinder.listable(facts, screens: content.displays.map(\.frame), excluding: Bundle.main.bundleIdentifier)
+        return ordered(listed.map {
+            WindowChoice(id: $0.id, bundleID: $0.bundleID, appName: $0.appName, title: $0.title, size: $0.frame.size, onAnotherDesktop: !$0.onScreen)
+        })
+    }
+
+    /// By app, then title.
+    nonisolated static func ordered(_ windows: [WindowChoice]) -> [WindowChoice] {
+        windows.sorted { ($0.appName.localizedLowercase, $0.title) < ($1.appName.localizedLowercase, $1.title) }
     }
 
     /// The screens, named as macOS names them, main first.

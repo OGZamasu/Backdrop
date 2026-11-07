@@ -116,7 +116,8 @@ final class WindowCaptureSource: NSObject, BackgroundSource, SCStreamOutput, SCS
 
     private func begin(generation mine: Int) async {
         do {
-            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+            // Not only what is on this desktop: an app that has gone full screen is on a desktop of its own, and is still captured.
+            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
             guard let filter = makeFilter(from: content) else {
                 if case .window = target {
                     // The window may simply not be open yet: show the calm card and look again shortly.
@@ -192,13 +193,9 @@ final class WindowCaptureSource: NSObject, BackgroundSource, SCStreamOutput, SCS
             return SCContentFilter(display: display, excludingWindows: ours)
 
         case .window(let bundleID, let title, let windowID):
-            let candidates = content.windows.filter {
-                $0.owningApplication?.bundleIdentifier == bundleID && $0.frame.width > 200 && $0.frame.height > 150
-            }
-            let exact = windowID.flatMap { id in candidates.first { $0.windowID == id } }
-            let named = title.flatMap { wanted in candidates.first { ($0.title ?? "").localizedCaseInsensitiveContains(wanted) } }
-            let largest = candidates.max { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }
-            guard let window = exact ?? named ?? largest else { return nil }
+            let facts = content.windows.compactMap(WindowFacts.init)
+            guard let found = WindowFinder.pick(bundleID: bundleID, title: title, windowID: windowID, among: facts, screens: content.displays.map(\.frame)),
+                  let window = content.windows.first(where: { $0.windowID == found.id }) else { return nil }
             return SCContentFilter(desktopIndependentWindow: window)
         }
     }
